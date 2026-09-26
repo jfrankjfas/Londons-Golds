@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   Zap,
+  Globe,
 } from 'lucide-react';
 
 interface AutoUpdaterModalProps {
@@ -44,7 +45,7 @@ export const AutoUpdaterModal: React.FC<AutoUpdaterModalProps> = ({
     ],
   });
 
-  const [activeTab, setActiveTab] = useState<'SCRIPTS' | 'DESKTOP' | 'CHANGELOG'>('SCRIPTS');
+  const [activeTab, setActiveTab] = useState<'WEB_DEPLOY' | 'SCRIPTS' | 'DESKTOP' | 'CHANGELOG'>('WEB_DEPLOY');
   const [isChecking, setIsChecking] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
@@ -128,10 +129,21 @@ export const AutoUpdaterModal: React.FC<AutoUpdaterModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 bg-slate-950/40 px-6 pt-2 text-xs font-mono">
+        <div className="flex border-b border-slate-800 bg-slate-950/40 px-6 pt-2 text-xs font-mono overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('WEB_DEPLOY')}
+            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'WEB_DEPLOY'
+                ? 'border-cyan-400 text-cyan-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5 text-cyan-400" />
+            Despliegue Web / Netlify & GitHub
+          </button>
           <button
             onClick={() => setActiveTab('SCRIPTS')}
-            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'SCRIPTS'
                 ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -142,18 +154,18 @@ export const AutoUpdaterModal: React.FC<AutoUpdaterModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('DESKTOP')}
-            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'DESKTOP'
                 ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
             <Laptop className="w-3.5 h-3.5 text-emerald-400" />
-            Modo App de Escritorio (Sin descargas)
+            Modo App de Escritorio (PWA)
           </button>
           <button
             onClick={() => setActiveTab('CHANGELOG')}
-            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'CHANGELOG'
                 ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -166,6 +178,84 @@ export const AutoUpdaterModal: React.FC<AutoUpdaterModalProps> = ({
 
         {/* Tab Content */}
         <div className="p-6 overflow-y-auto space-y-5 flex-1">
+          {activeTab === 'WEB_DEPLOY' && (
+            <div className="space-y-4 text-xs font-mono">
+              {/* Active Cloud App Box */}
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 via-cyan-950/30 to-blue-950/40 border border-emerald-500/40 text-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                    Tu Plataforma Web ya está Publicada y Activa en la Nube
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-mono">
+                    24/7 Gratis
+                  </span>
+                </div>
+                <p className="font-sans text-[13px] text-slate-300 leading-relaxed">
+                  No necesitas encender tu PC ni tener Node.js abierto. Puedes acceder ahora mismo desde cualquier teléfono o computadora:
+                </p>
+                <div className="flex items-center justify-between p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 font-mono text-xs">
+                  <span className="truncate pr-2 select-all">https://ais-dev-iy4cleajyuk22qn3iagzfe-671281188109.us-east1.run.app</span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => copyToClipboard('https://ais-dev-iy4cleajyuk22qn3iagzfe-671281188109.us-east1.run.app', 'cloud-url')}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded flex items-center gap-1 text-[11px]"
+                    >
+                      {copiedCode === 'cloud-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      Copiar
+                    </button>
+                    <a
+                      href="https://ais-dev-iy4cleajyuk22qn3iagzfe-671281188109.us-east1.run.app"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded flex items-center gap-1 text-[11px]"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Abrir Web
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Netlify 404 Solution Explanation */}
+              <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                  ¿Por qué apareció el error "Page not found (404)" en Netlify?
+                </div>
+                <p className="font-sans text-[12px] text-slate-300 leading-relaxed">
+                  En Vite y React SPA, Netlify no sabe por defecto dónde se compila la página ni cómo redirigir las rutas.
+                  <strong> Ya hemos agregado en tu código los archivos necesarios:</strong>
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="p-2.5 bg-slate-950/80 border border-slate-800 rounded-lg">
+                    <span className="font-bold text-cyan-300 block mb-1">📄 netlify.toml</span>
+                    <span className="text-slate-400 font-sans">
+                      Indica a Netlify que la carpeta pública es <code className="text-amber-300">dist</code> y redirige todas las rutas a <code className="text-amber-300">/index.html</code>.
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-slate-950/80 border border-slate-800 rounded-lg">
+                    <span className="font-bold text-emerald-300 block mb-1">📄 public/_redirects</span>
+                    <span className="text-slate-400 font-sans">
+                      Asegura que cualquier enlace o recarga no arroje error 404 en Netlify o Cloudflare.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80">
+                  <span className="text-white font-bold block mb-1 font-sans text-xs">
+                    Pasos en Netlify con tu GitHub:
+                  </span>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-300 font-sans text-[12px]">
+                    <li>En tu panel de Netlify, ve a <strong>Site Configuration → Build & deploy</strong>.</li>
+                    <li>Verifica que <strong>Publish directory</strong> sea: <code className="text-amber-300 bg-slate-950 px-1 py-0.5 rounded">dist</code></li>
+                    <li>Verifica que <strong>Build command</strong> sea: <code className="text-amber-300 bg-slate-950 px-1 py-0.5 rounded">npm run build</code></li>
+                    <li>Haz clic en <strong>Trigger deploy → Clear cache and deploy site</strong>.</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'SCRIPTS' && (
             <div className="space-y-4 text-xs font-mono">
               {/* Problem Solved Banner */}

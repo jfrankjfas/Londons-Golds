@@ -1,5 +1,5 @@
-import React from 'react';
-import { BookOpen, Download, TrendingUp, CheckCircle, XCircle, Shield, Award } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { BookOpen, Download, TrendingUp, CheckCircle, XCircle, Shield, Award, Calendar } from 'lucide-react';
 import { DayData, StrategyParameters } from '../types/trading.ts';
 import { evaluateStrategyDay } from '../utils/quantEngine.ts';
 
@@ -16,10 +16,21 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
   allDays,
   params,
 }) => {
+  const [journalMonth, setJournalMonth] = useState<'ALL' | 'SEP' | 'AUG' | 'JUL'>('ALL');
+
   if (!isOpen) return null;
 
-  // Process all days into structured journal entries
-  const journalEntries = allDays.map((day) => {
+  // Filtered days according to selected month
+  const targetDays = journalMonth === 'ALL'
+    ? allDays
+    : journalMonth === 'SEP'
+    ? allDays.filter((d) => d.date.startsWith('2026-09'))
+    : journalMonth === 'AUG'
+    ? allDays.filter((d) => d.date.startsWith('2026-08'))
+    : allDays.filter((d) => d.date.startsWith('2026-07'));
+
+  // Process days into structured journal entries
+  const journalEntries = targetDays.map((day) => {
     const { asianRange, trade } = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
 
     let outcomeText = 'SIN OPERACIÓN';
@@ -190,17 +201,60 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
             </div>
           </div>
 
-          {/* Action Row */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-mono text-slate-400">
-              Registros mecánicos de la estrategia M15 London Breakout:
-            </span>
+          {/* Action Row & Month Selector */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg p-1">
+              <span className="text-[10px] font-mono text-slate-400 px-2 uppercase flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-amber-400" /> Período:
+              </span>
+              <button
+                onClick={() => setJournalMonth('ALL')}
+                className={`px-2.5 py-1 text-xs font-mono rounded-md transition-all ${
+                  journalMonth === 'ALL'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Todos ({allDays.length})
+              </button>
+              <button
+                onClick={() => setJournalMonth('SEP')}
+                className={`px-2.5 py-1 text-xs font-mono rounded-md transition-all ${
+                  journalMonth === 'SEP'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Sep 2026 ({allDays.filter((d) => d.date.startsWith('2026-09')).length})
+              </button>
+              <button
+                onClick={() => setJournalMonth('AUG')}
+                className={`px-2.5 py-1 text-xs font-mono rounded-md transition-all ${
+                  journalMonth === 'AUG'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Ago 2026 ({allDays.filter((d) => d.date.startsWith('2026-08')).length})
+              </button>
+              <button
+                onClick={() => setJournalMonth('JUL')}
+                className={`px-2.5 py-1 text-xs font-mono rounded-md transition-all ${
+                  journalMonth === 'JUL'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Jul 2026 ({allDays.filter((d) => d.date.startsWith('2026-07')).length})
+              </button>
+            </div>
+
             <button
               onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-950 transition"
+              className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-950 transition"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Exportar Diario a CSV / Excel</span>
+              <span>Exportar ({journalEntries.length} Sesiones) a CSV</span>
             </button>
           </div>
 

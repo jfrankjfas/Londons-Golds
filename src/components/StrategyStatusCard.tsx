@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { AsianRange, DayData, StopLossType, StrategyParameters, TradeSignal, DailyRiskTracker } from '../types/trading.ts';
+import { evaluateStrategyDay } from '../utils/quantEngine.ts';
 import {
   CheckCircle2,
   AlertCircle,
@@ -19,6 +20,12 @@ import {
   Sliders,
   RotateCcw,
   Send,
+  Calendar,
+  BarChart3,
+  Filter,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
 } from 'lucide-react';
 
 interface StrategyStatusCardProps {
@@ -71,25 +78,270 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
   const isLockedByTp = dailyTracker?.status === 'LOCKED_BY_TP';
   const isDayLocked = isLockedBySl || isLockedByTp;
 
+  // Month & Period Filtering
+  const [selectedMonth, setSelectedMonth] = useState<'ALL' | 'SEP' | 'AUG' | 'JUL' | 'RECENT'>('ALL');
+  const [isSimulatingBacktest, setIsSimulatingBacktest] = useState(false);
+  const [simulationProgress, setSimulationProgress] = useState(0);
+
+  // Filter days based on selectedMonth
+  const filteredDays = useMemo(() => {
+    if (selectedMonth === 'ALL') return allDays;
+    if (selectedMonth === 'SEP') return allDays.filter((d) => d.date.startsWith('2026-09'));
+    if (selectedMonth === 'AUG') return allDays.filter((d) => d.date.startsWith('2026-08'));
+    if (selectedMonth === 'JUL') return allDays.filter((d) => d.date.startsWith('2026-07'));
+    if (selectedMonth === 'RECENT') return allDays.slice(-14);
+    return allDays;
+  }, [allDays, selectedMonth]);
+
+  // Pre-calculate evaluation for each day for instant badges & statistics
+  const dayEvaluations = useMemo(() => {
+    const map = new Map<string, { status: string; pnlR: number; pnlUSD: number; isBreakeven: boolean }>();
+    allDays.forEach((d) => {
+      const { trade: evaluatedTrade } = evaluateStrategyDay(d.candles, d.prevDayTrend, params);
+      if (!evaluatedTrade) {
+        map.set(d.date, { status: 'NO_TRADE', pnlR: 0, pnlUSD: 0, isBreakeven: false });
+      } else if (evaluatedTrade.status === 'HIT_TP') {
+        map.set(d.date, { status: 'WIN', pnlR: params.rrRatio, pnlUSD: evaluatedTrade.pnlUSD || 100, isBreakeven: false });
+      } else if (evaluatedTrade.status === 'HIT_SL') {
+        map.set(d.date, { status: 'LOSS', pnlR: -1, pnlUSD: evaluatedTrade.pnlUSD || -50, isBreakeven: false });
+      } else if (evaluatedTrade.status === 'BREAKEVEN' || evaluatedTrade.isBreakevenTriggered) {
+        map.set(d.date, { status: 'BE', pnlR: 0, pnlUSD: 0, isBreakeven: true });
+      } else {
+        map.set(d.date, { status: 'ACTIVE', pnlR: 0, pnlUSD: 0, isBreakeven: false });
+      }
+    });
+    return map;
+  }, [allDays, params]);
+
+  // Aggregate metrics for filteredDays
+  const backtestMetrics = useMemo(() => {
+    let totalTrades = 0;
+    let wins = 0;
+    let losses = 0;
+    let breakevens = 0;
+    let totalPnLUSD = 0;
+    let totalR = 0;
+    let peakEquity = 0;
+    let currentEquity = 0;
+    let maxDrawdownUSD = 0;
+    let grossWinsUSD = 0;
+    let grossLossesUSD = 0;
+
+    filteredDays.forEach((d) => {
+      const ev = dayEvaluations.get(d.date);
+      if (!ev) return;
+      if (ev.status === 'WIN') {
+        totalTrades++;
+        wins++;
+        totalPnLUSD += ev.pnlUSD;
+        totalR += ev.pnlR;
+        grossWinsUSD += ev.pnlUSD;
+        currentEquity += ev.pnlUSD;
+      } else if (ev.status === 'LOSS') {
+        totalTrades++;
+        losses++;
+        totalPnLUSD += ev.pnlUSD;
+        totalR += ev.pnlR;
+        grossLossesUSD += Math.abs(ev.pnlUSD);
+        currentEquity += ev.pnlUSD;
+      } else if (ev.status === 'BE') {
+        totalTrades++;
+        breakevens++;
+      }
+      if (currentEquity > peakEquity) peakEquity = currentEquity;
+      const dd = peakEquity - currentEquity;
+      if (dd > maxDrawdownUSD) maxDrawdownUSD = dd;
+    });
+
+    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
+    const profitFactor = grossLossesUSD > 0 ? (grossWinsUSD / grossLossesUSD).toFixed(2) : (grossWinsUSD > 0 ? '99.9' : '0.0');
+    const maxDrawdownPct = params.accountBalance > 0 ? ((maxDrawdownUSD / params.accountBalance) * 100).toFixed(1) : '0';
+    const totalReturnPct = params.accountBalance > 0 ? ((totalPnLUSD / params.accountBalance) * 100).toFixed(1) : '0';
+
+    return {
+      totalDays: filteredDays.length,
+      totalTrades,
+      wins,
+      losses,
+      breakevens,
+      winRate,
+      profitFactor,
+      totalPnLUSD: parseFloat(totalPnLUSD.toFixed(2)),
+      totalR: parseFloat(totalR.toFixed(1)),
+      maxDrawdownPct,
+      totalReturnPct,
+    };
+  }, [filteredDays, dayEvaluations, params.accountBalance]);
+
+  // Automated batch backtesting runner simulation
+  const handleRunFullBacktest = () => {
+    if (isSimulatingBacktest) return;
+    setIsSimulatingBacktest(true);
+    setSimulationProgress(0);
+
+    let idx = 0;
+    const interval = setInterval(() => {
+      if (idx < filteredDays.length) {
+        onSelectDate(filteredDays[idx].date);
+        setSimulationProgress(Math.round(((idx + 1) / filteredDays.length) * 100));
+        idx++;
+      } else {
+        clearInterval(interval);
+        setIsSimulatingBacktest(false);
+        // Land on today
+        onSelectDate(allDays[allDays.length - 1].date);
+      }
+    }, 40);
+  };
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Historical Days Selector Tabs */}
-      <div className="bg-[#0E131F] border border-slate-800 rounded-xl p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">
-            Sesiones Históricas & Backtesting
-          </span>
-          <span className="text-[11px] text-slate-400">Selecciona un día para auditar</span>
+      {/* Historical Days Selector Tabs & Multi-Month Backtesting Engine */}
+      <div className="bg-[#0E131F] border border-slate-800 rounded-xl p-3.5 shadow-sm">
+        {/* Header with Title and Month Filters */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
+              Motor de Backtesting Multi-Mes & Auditoría Cuantitativa
+            </span>
+            <span className="text-[10px] font-mono bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20">
+              {allDays.length} Sesiones Reales (Jul - Sep 2026)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Month Filter Tabs */}
+            <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+              <button
+                onClick={() => setSelectedMonth('ALL')}
+                className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition-all ${
+                  selectedMonth === 'ALL'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Todos ({allDays.length})
+              </button>
+              <button
+                onClick={() => setSelectedMonth('SEP')}
+                className={`px-2 py-1 text-[11px] font-mono rounded-md transition-all ${
+                  selectedMonth === 'SEP'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Sep 2026 ({allDays.filter((d) => d.date.startsWith('2026-09')).length})
+              </button>
+              <button
+                onClick={() => setSelectedMonth('AUG')}
+                className={`px-2 py-1 text-[11px] font-mono rounded-md transition-all ${
+                  selectedMonth === 'AUG'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Ago 2026 ({allDays.filter((d) => d.date.startsWith('2026-08')).length})
+              </button>
+              <button
+                onClick={() => setSelectedMonth('JUL')}
+                className={`px-2 py-1 text-[11px] font-mono rounded-md transition-all ${
+                  selectedMonth === 'JUL'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Jul 2026 ({allDays.filter((d) => d.date.startsWith('2026-07')).length})
+              </button>
+              <button
+                onClick={() => setSelectedMonth('RECENT')}
+                className={`px-2 py-1 text-[11px] font-mono rounded-md transition-all ${
+                  selectedMonth === 'RECENT'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Últimos 14D
+              </button>
+            </div>
+
+            {/* Run Full Backtest Simulation Button */}
+            <button
+              onClick={handleRunFullBacktest}
+              disabled={isSimulatingBacktest}
+              className={`flex items-center gap-1.5 px-3 py-1 text-[11px] font-mono font-bold rounded-lg border transition-all ${
+                isSimulatingBacktest
+                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+              }`}
+            >
+              <Play className="w-3 h-3" />
+              {isSimulatingBacktest ? `Simulando ${simulationProgress}%` : 'Ejecutar Backtest'}
+            </button>
+
+            {/* Jump to Today Button */}
+            <button
+              onClick={() => onSelectDate(allDays[allDays.length - 1].date)}
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-mono bg-blue-500/10 border border-blue-500/30 text-blue-300 hover:bg-blue-500/20 rounded-lg transition-all"
+            >
+              <Zap className="w-3 h-3 text-amber-400" />
+              Hoy 26 Sep (En Vivo)
+            </button>
+          </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-1.5">
-          {allDays.map((d, index) => {
+
+        {/* Backtesting Aggregate Performance Ribbon for Filtered Period */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 mb-3 bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Sesiones / Operadas</span>
+            <span className="text-xs font-bold font-mono text-white">
+              {backtestMetrics.totalDays} días <span className="text-amber-400 font-normal">({backtestMetrics.totalTrades} trades)</span>
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Win Rate (Efectividad)</span>
+            <span className="text-xs font-bold font-mono text-emerald-400 flex items-center gap-1">
+              <Award className="w-3 h-3 text-amber-400" /> {backtestMetrics.winRate}% ({backtestMetrics.wins}W / {backtestMetrics.losses}L)
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Beneficio Neto</span>
+            <span className={`text-xs font-bold font-mono ${backtestMetrics.totalPnLUSD >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {backtestMetrics.totalPnLUSD >= 0 ? `+${backtestMetrics.totalPnLUSD}` : backtestMetrics.totalPnLUSD} USD
+              <span className="text-[10px] ml-1 text-slate-400">(+{backtestMetrics.totalR}R)</span>
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Profit Factor</span>
+            <span className="text-xs font-bold font-mono text-cyan-300">
+              {backtestMetrics.profitFactor}
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Protegidos Breakeven</span>
+            <span className="text-xs font-bold font-mono text-cyan-400">
+              {backtestMetrics.breakevens} trades (1:1)
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-mono text-slate-400 uppercase">Máx Drawdown</span>
+            <span className="text-xs font-bold font-mono text-amber-400">
+              -{backtestMetrics.maxDrawdownPct}%
+            </span>
+          </div>
+        </div>
+
+        {/* Scrollable / Grid Session Selector */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-1.5 max-h-56 overflow-y-auto pr-1">
+          {filteredDays.map((d) => {
             const isSelected = d.date === selectedDate;
-            const isToday = index === allDays.length - 1;
+            const isToday = d.date === allDays[allDays.length - 1].date;
             const dObj = new Date(d.date + 'T12:00:00Z');
             const dayFormatted = isToday
-              ? `Hoy ${dObj.getUTCDate()} (En Vivo)`
-              : dObj.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', timeZone: 'UTC' });
+              ? `Hoy ${dObj.getUTCDate()} Sep`
+              : dObj.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+            const ev = dayEvaluations.get(d.date);
 
             return (
               <button
@@ -97,24 +349,42 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
                 onClick={() => onSelectDate(d.date)}
                 className={`flex flex-col p-2 rounded-lg border text-left transition-all ${
                   isSelected
-                    ? 'bg-amber-500/15 border-amber-500/40 text-white shadow-sm ring-1 ring-amber-500/30'
+                    ? 'bg-amber-500/15 border-amber-500/60 text-white shadow-sm ring-1 ring-amber-500/40'
                     : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
                 <div className="flex items-center justify-between w-full">
-                  <span className="text-xs font-bold font-sans capitalize">{dayFormatted}</span>
-                  {isToday && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  )}
+                  <span className="text-[11px] font-bold font-sans capitalize truncate">{dayFormatted}</span>
+                  {isToday ? (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                  ) : ev?.status === 'WIN' ? (
+                    <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/15 px-1 py-0.2 rounded shrink-0">
+                      +2R
+                    </span>
+                  ) : ev?.status === 'LOSS' ? (
+                    <span className="text-[9px] font-mono font-bold text-rose-400 bg-rose-500/15 px-1 py-0.2 rounded shrink-0">
+                      -1R
+                    </span>
+                  ) : ev?.status === 'BE' ? (
+                    <span className="text-[9px] font-mono font-bold text-cyan-400 bg-cyan-500/15 px-1 py-0.2 rounded shrink-0">
+                      BE
+                    </span>
+                  ) : null}
                 </div>
-                <div className="flex items-center gap-1 mt-1 text-[10px] font-mono">
+
+                <div className="flex items-center justify-between mt-1 text-[10px] font-mono">
                   {d.prevDayTrend === 'BULLISH' ? (
                     <span className="text-emerald-400 flex items-center">
-                      <TrendingUp className="w-2.5 h-2.5 mr-0.5" /> D1 Alcista
+                      <TrendingUp className="w-2.5 h-2.5 mr-0.5" /> D1 Alc
                     </span>
                   ) : (
                     <span className="text-rose-400 flex items-center">
-                      <TrendingDown className="w-2.5 h-2.5 mr-0.5" /> D1 Bajista
+                      <TrendingDown className="w-2.5 h-2.5 mr-0.5" /> D1 Baj
+                    </span>
+                  )}
+                  {isToday && (
+                    <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider">
+                      En Vivo
                     </span>
                   )}
                 </div>

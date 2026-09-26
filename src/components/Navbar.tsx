@@ -13,6 +13,7 @@ import {
   BarChart3,
   FileSpreadsheet,
   RefreshCw,
+  Globe,
 } from 'lucide-react';
 import { soundManager } from '../utils/audioAlerts.ts';
 
@@ -167,16 +168,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">Bot MT5</span>
           </button>
 
-          {/* 1-Click Auto Updater Button */}
+          {/* 1-Click Auto Updater & Web Deployment Button */}
           {onOpenUpdaterModal && (
             <button
               id="btn-open-updater"
               onClick={onOpenUpdaterModal}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-medium transition-all shadow-sm"
-              title="Centro de Actualización Automática en 1-Clic"
+              title="Despliegue Web, Enlace en la Nube y Actualizador Automático"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">Actualizar</span>
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Web & Nube</span>
             </button>
           )}
 
