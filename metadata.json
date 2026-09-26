@@ -1,0 +1,6 @@
+{
+  "name": "XAUUSD London Breakout Quant",
+  "description": "Plataforma interactiva de trading cuantitativo para XAU/USD basada en la estrategia London Open Breakout con rango asiático, filtro D1, cálculo de riesgo y asistente de IA.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

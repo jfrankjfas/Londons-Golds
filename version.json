@@ -1,0 +1,13 @@
+{
+  "version": "2.5.0",
+  "codename": "Quant-Pro Institutional",
+  "buildDate": "2026-09-23",
+  "releaseNotes": [
+    "Escudo de Noticias & Calendario Económico XAU/USD con filtro de noticias rojas en apertura de Londres.",
+    "Simulador de Monte Carlo con 1,000 iteraciones y proyección de curva de equidad.",
+    "Generador de Ticket de Orden para MetaTrader 4/5, cTrader y Webhooks con 1-clic copy.",
+    "Auditoría cuantitativa de las 7 confirmaciones y gauge de volatilidad del rango asiático.",
+    "Diario de Trading auditado con exportación instantánea a CSV / Excel.",
+    "Sistema de actualización automática en 1-clic (actualizar.bat y actualizar.sh) para evitar re-descargas."
+  ]
+}
