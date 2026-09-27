@@ -734,17 +734,24 @@ export default function App() {
           isReplayActive={isReplayActive}
           replayStep={replayStep}
           onOpenOrderTicket={() => setIsTicketOpen(true)}
+          onOpenJournalModal={() => setIsJournalOpen(true)}
         />
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-[#0E131F] py-4 px-4 text-center text-xs text-slate-500 font-mono">
+      <footer className="border-t border-slate-800/80 bg-[#0E131F] py-4 px-4 text-center text-xs text-slate-400 font-mono">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>XAU/USD London Open Breakout Quant Platform • Reglas 100% Mecánicas</span>
+          <span>
+            XAU/USD London Breakout Quant • Desarrollado por el <strong className="text-amber-400 font-bold">Ingeniero Francisco Alvarado</strong>
+          </span>
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Rango Asiático: 00:00 - 07:00 UTC</span>
-            <span>Apertura Londres: 08:00 UTC</span>
-            <span>Límites: 2 SL / 2 TP • Breakeven 1:1</span>
+            <button
+              onClick={() => setIsJournalOpen(true)}
+              className="text-amber-400/90 hover:text-amber-300 underline underline-offset-2 transition"
+            >
+              Dossier Oficial PDF & Auditoría
+            </button>
+            <span>R:R 1:{params.rrRatio} • Breakeven 1:1</span>
           </div>
         </div>
       </footer>

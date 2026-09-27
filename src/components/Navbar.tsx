@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   BarChart3,
   FileSpreadsheet,
+  FileText,
   RefreshCw,
   Globe,
 } from 'lucide-react';
@@ -68,7 +69,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </h1>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">
-              Estrategia Cuantitativa Mecánica M15 • Filtro D1 • R:R 1:2 • Riesgo 0.5%
+              Estrategia Cuantitativa Mecánica M15 • Por Ing. Francisco Alvarado • R:R 1:2
             </p>
           </div>
         </div>
@@ -122,16 +123,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* Trading Journal & CSV */}
+          {/* Trading Journal & PDF Dossier */}
           {onOpenJournalModal && (
             <button
               id="btn-open-journal"
               onClick={onOpenJournalModal}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-medium transition-all shadow-sm"
-              title="Diario Cuantitativo de Trading y Exportación CSV"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-medium transition-all shadow-sm"
+              title="Diario Cuantitativo, Auditoría y Descarga de Dossier PDF Oficial"
             >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden md:inline">Diario & CSV</span>
+              <FileText className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden md:inline font-bold">Diario & PDF</span>
             </button>
           )}
 

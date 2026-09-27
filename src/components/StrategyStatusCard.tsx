@@ -26,6 +26,7 @@ import {
   CheckCircle,
   XCircle,
   RefreshCw,
+  FileText,
 } from 'lucide-react';
 
 interface StrategyStatusCardProps {
@@ -48,6 +49,7 @@ interface StrategyStatusCardProps {
   isReplayActive?: boolean;
   replayStep?: number;
   onOpenOrderTicket?: () => void;
+  onOpenJournalModal?: () => void;
 }
 
 export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
@@ -70,6 +72,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
   isReplayActive = false,
   replayStep = 0,
   onOpenOrderTicket,
+  onOpenJournalModal,
 }) => {
   const isBullishD1 = selectedDay.prevDayTrend === 'BULLISH';
   const effectiveRisk = params.autoRiskPerTrade
@@ -347,6 +350,18 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
               <Zap className="w-3 h-3 text-amber-400" />
               Hoy 26 Sep (En Vivo)
             </button>
+
+            {/* Open Quantitative Journal & Official PDF Dossier */}
+            {onOpenJournalModal && (
+              <button
+                onClick={onOpenJournalModal}
+                className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-mono bg-gradient-to-r from-amber-500/20 to-amber-600/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-amber-600/30 rounded-lg transition-all font-bold shadow-sm"
+                title="Ver Diario Completo de Operaciones y Descargar Dossier Oficial en PDF (Ing. Francisco Alvarado)"
+              >
+                <FileText className="w-3 h-3 text-amber-400" />
+                Dossier PDF & Diario
+              </button>
+            )}
           </div>
         </div>
 

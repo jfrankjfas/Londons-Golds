@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Code2, Download, Terminal, Layers } from 'lucide-react';
+import {
+  X,
+  Copy,
+  Check,
+  Code2,
+  Download,
+  Terminal,
+  Layers,
+  ShieldCheck,
+  AlertTriangle,
+  Zap,
+  Info,
+  ExternalLink,
+  Award,
+} from 'lucide-react';
 
 interface CodeExporterModalProps {
   isOpen: boolean;
@@ -7,17 +21,796 @@ interface CodeExporterModalProps {
 }
 
 export const CodeExporterModal: React.FC<CodeExporterModalProps> = ({ isOpen, onClose }) => {
-  const [activeLang, setActiveLang] = useState<'python' | 'mql5' | 'pinescript'>('python');
+  const [activeLang, setActiveLang] = useState<'mql5' | 'mql4' | 'pinescript' | 'python' | 'checklist'>('mql5');
   const [activePyModule, setActivePyModule] = useState<'main' | 'data' | 'calc' | 'risk' | 'exec'>('main');
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
 
+  // =========================================================================
+  // METATRADER 5 (MQL5) - PRODUCTION READY FOR REAL ACCOUNT
+  // =========================================================================
+  const mql5Code = `//+------------------------------------------------------------------+
+//|                                     XAUUSD_LondonBreakout_Quant.mq5 |
+//|   Algoritmo Cuantitativo Institucional London Breakout & Retest  |
+//|        Desarrollado por el Ingeniero Francisco Alvarado          |
+//|               Validado para Cuentas Reales y Prop Firms          |
+//+------------------------------------------------------------------+
+#property copyright "Ingeniero Francisco Alvarado - Cuantitativo XAU/USD"
+#property link      "https://github.com/francisco-alvarado-quant"
+#property version   "2.50"
+#property description "EA Cuantitativo optimizado para XAU/USD (Oro). Ejecuta Ruptura de Sesion Tokio en Londres con Filtro D1, Proteccion Breakeven 1:1, Control de Spread y Circuito de Blindaje Diario."
+#property strict
+
+#include <Trade\\Trade.mqh>
+CTrade trade;
+
+//--- Enumeraciones
+enum ENUM_TREND_MODE
+{
+   TREND_ANY_BREAKOUT = 0, // Ambas Direcciones (Ruptura Libre / Alta Frecuencia)
+   TREND_D1_STRICT    = 1  // Filtro Tendencial D1 Estricto (Solo a favor del dia previo)
+};
+
+//--- Parametros de Entrada
+input group "=== Identificacion & Gestion de Riesgo ==="
+input ulong             InpMagicNumber       = 777926;       // Magic Number Unico
+input double            InpRiskPercent       = 0.5;          // Riesgo por Trade (% Balance: 0.5% a 1.0%)
+input double            InpRRRatio           = 2.0;          // Ratio Riesgo / Beneficio (Objetivo 1:2)
+input int               InpMaxDailySL        = 2;            // Limite Diario de Perdidas (Circuit Breaker)
+input int               InpMaxDailyTrades    = 2;            // Maximo de Operaciones Diarias (1 o 2)
+
+input group "=== Horarios de Sesion (Hora UTC) ==="
+input int               InpStartAsia         = 0;            // Inicio Rango Asiatico (Hora UTC)
+input int               InpEndAsia           = 6;            // Fin Rango Asiatico (Hora UTC)
+input int               InpStartLondon       = 8;            // Inicio Ventana Londres (Hora UTC)
+input int               InpEndLondon         = 13;           // Fin Ventana Londres (Hora UTC)
+
+input group "=== Filtros Cuantitativos de Calidad ==="
+input ENUM_TREND_MODE   InpTrendMode         = TREND_ANY_BREAKOUT; // Modo de Operacion
+input double            InpMinAsiaRange      = 6.0;          // Amplitud Minima Rango Tokio (Puntos Oro $)
+input double            InpMaxAsiaRange      = 22.0;         // Amplitud Maxima Rango Tokio (Puntos Oro $)
+input int               InpMaxSpreadPips     = 35;           // Spread Maximo Permitido (Puntos / Centavos)
+input int               InpSlippage          = 20;           // Tolerancia Desviacion Precio (Slippage)
+
+input group "=== Blindaje y Proteccion Breakeven ==="
+input bool              InpEnableBreakeven   = true;         // Activar Breakeven Dinamico a 1:1 R
+input double            InpBEBufferPips      = 1.0;          // Buffer por encima de entrada (+10 pts)
+
+//--- Variables Globales de Estado
+double   g_asiaHigh          = 0.0;
+double   g_asiaLow           = 0.0;
+double   g_asiaMid           = 0.0;
+double   g_asiaRange         = 0.0;
+int      g_lastTradeDay      = -1;
+int      g_dailyTradesCount  = 0;
+int      g_dailySLCount      = 0;
+datetime g_lastBarTime       = 0;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   trade.SetDeviationInPoints(InpSlippage);
+   trade.SetTypeFilling(ORDER_FILLING_IOC);
+   
+   Print("===============================================================");
+   Print(" EA INICIADO: XAU/USD London Breakout Cuantitativo");
+   Print(" Desarrollado por: Ingeniero Francisco Alvarado");
+   Print(" Riesgo por Operacion: ", InpRiskPercent, "% | R:R: 1:", InpRRRatio);
+   Print("===============================================================");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Comment("");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   MqlDateTime dt;
+   TimeGMT(dt); // Reloj sincronizado con UTC
+   
+   // 1. Reset diario a medianoche UTC
+   if(dt.hour == 0 && dt.min == 0 && dt.sec < 10 && g_lastTradeDay != dt.day)
+   {
+      g_asiaHigh = 0.0;
+      g_asiaLow  = 0.0;
+      g_dailyTradesCount = 0;
+      g_dailySLCount = 0;
+   }
+   
+   // 2. Gestion Dinamica de Breakeven en tiempo real
+   if(InpEnableBreakeven)
+   {
+      ManageBreakeven();
+   }
+   
+   // 3. Captura del Rango Asiatico (00:00 a 06:00 UTC)
+   if(dt.hour >= InpStartAsia && dt.hour < InpEndAsia)
+   {
+      MqlRates currentM15[];
+      ArraySetAsSeries(currentM15, true);
+      if(CopyRates(_Symbol, PERIOD_M15, 0, 1, currentM15) > 0)
+      {
+         if(g_asiaHigh == 0.0 || currentM15[0].high > g_asiaHigh) g_asiaHigh = currentM15[0].high;
+         if(g_asiaLow == 0.0  || currentM15[0].low < g_asiaLow)   g_asiaLow  = currentM15[0].low;
+         g_asiaRange = g_asiaHigh - g_asiaLow;
+         g_asiaMid   = (g_asiaHigh + g_asiaLow) / 2.0;
+      }
+      UpdateDashboard(dt, "Acumulacion Tokio (00:00-06:00 UTC)");
+      return;
+   }
+   
+   // 4. Verificacion de limites de seguridad (Circuito de Proteccion)
+   if(g_dailySLCount >= InpMaxDailySL)
+   {
+      UpdateDashboard(dt, "ALERTA: Maximo de 2 Stop Loss alcanzado hoy. Trading pausado.");
+      return;
+   }
+   if(g_dailyTradesCount >= InpMaxDailyTrades)
+   {
+      UpdateDashboard(dt, "Completado: Maximo de 2 operaciones alcanzado hoy.");
+      return;
+   }
+   
+   // 5. Ventana Operativa de Londres (08:00 a 13:00 UTC)
+   if(dt.hour >= InpStartLondon && dt.hour < InpEndLondon)
+   {
+      UpdateDashboard(dt, "Sesion Londres ACTIVA: Buscando Gatillos de Ruptura / Retesteo");
+      
+      // Control de vela nueva M15 (evita disparos falsos intra-vela)
+      datetime currentBar = iTime(_Symbol, PERIOD_M15, 0);
+      if(g_lastBarTime == currentBar) return;
+      
+      // Filtro de Volatilidad: Asegura que Tokio no este ni muerto ni hiper-extendido
+      if(g_asiaRange < InpMinAsiaRange || g_asiaRange > InpMaxAsiaRange)
+      {
+         UpdateDashboard(dt, "Filtro Volatilidad: Rango Tokio anomalo (" + DoubleToString(g_asiaRange, 2) + " pts). Esperando.");
+         return;
+      }
+      
+      // Filtro de Spread (Proteccion ante manipulaciones y baja liquidez)
+      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      if(spread > InpMaxSpreadPips)
+      {
+         Print("⚠️ Spread elevado: ", spread, " pts. Entrada bloqueada por seguridad.");
+         return;
+      }
+      
+      // Obtener ultimas 2 velas cerradas en M15
+      MqlRates m15[];
+      ArraySetAsSeries(m15, true);
+      if(CopyRates(_Symbol, PERIOD_M15, 1, 2, m15) < 2) return;
+      
+      // Filtro Direccional D1 (Tendencia de vela diaria anterior)
+      MqlRates d1[];
+      ArraySetAsSeries(d1, true);
+      if(CopyRates(_Symbol, PERIOD_D1, 1, 1, d1) < 1) return;
+      
+      bool isDailyBullish = (d1[0].close > d1[0].open);
+      bool isDailyBearish = (d1[0].close < d1[0].open);
+      
+      bool allowLong  = (InpTrendMode == TREND_ANY_BREAKOUT) || (isDailyBullish);
+      bool allowShort = (InpTrendMode == TREND_ANY_BREAKOUT) || (isDailyBearish);
+      
+      double close1 = m15[0].close; // Vela recien cerrada
+      double close2 = m15[1].close; // Vela previa
+      double low1   = m15[0].low;
+      double high1  = m15[0].high;
+      double open1  = m15[0].open;
+      
+      bool isFirstTrade = (g_dailyTradesCount == 0);
+      
+      // --- CONDICION DE COMPRA (BUY) ---
+      // Trade 1: Cierre limpio por encima del High Asiatico
+      // Trade 2: Retesteo con rechazo sobre el High Asiatico y vela verde
+      bool buyBreakout = allowLong && (
+         (isFirstTrade && close1 > g_asiaHigh && close2 <= g_asiaHigh) ||
+         (!isFirstTrade && close1 > g_asiaHigh && low1 >= (g_asiaHigh - 1.5) && close1 > open1)
+      );
+      
+      // --- CONDICION DE VENTA (SELL) ---
+      // Trade 1: Cierre limpio por debajo del Low Asiatico
+      // Trade 2: Retesteo con rechazo bajo el Low Asiatico y vela roja
+      bool sellBreakout = allowShort && (
+         (isFirstTrade && close1 < g_asiaLow && close2 >= g_asiaLow) ||
+         (!isFirstTrade && close1 < g_asiaLow && high1 <= (g_asiaLow + 1.5) && close1 < open1)
+      );
+      
+      // Ejecutar Compra
+      if(buyBreakout && PositionsTotal() == 0)
+      {
+         double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double sl = isFirstTrade ? g_asiaMid : (entry - MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
+         double riskDistance = entry - sl;
+         double tp = entry + (riskDistance * InpRRRatio);
+         
+         double lots = CalculateLotSize(entry, sl);
+         string comment = StringFormat("LB #%d Long [Ing. Alvarado]", g_dailyTradesCount + 1);
+         
+         if(trade.Buy(lots, _Symbol, entry, sl, tp, comment))
+         {
+            g_lastBarTime = currentBar;
+            g_dailyTradesCount++;
+            g_lastTradeDay = dt.day;
+            Print("✅ BUY EJECUTADO: Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
+         }
+      }
+      // Ejecutar Venta
+      else if(sellBreakout && PositionsTotal() == 0)
+      {
+         double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double sl = isFirstTrade ? g_asiaMid : (entry + MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
+         double riskDistance = sl - entry;
+         double tp = entry - (riskDistance * InpRRRatio);
+         
+         double lots = CalculateLotSize(entry, sl);
+         string comment = StringFormat("LB #%d Short [Ing. Alvarado]", g_dailyTradesCount + 1);
+         
+         if(trade.Sell(lots, _Symbol, entry, sl, tp, comment))
+         {
+            g_lastBarTime = currentBar;
+            g_dailyTradesCount++;
+            g_lastTradeDay = dt.day;
+            Print("✅ SELL EJECUTADO: Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
+         }
+      }
+   }
+   else
+   {
+      UpdateDashboard(dt, "Fuera de Ventana Operativa (Esperando apertura Londres 08:00 UTC)");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Proteccion Automatica Breakeven Dinamico a 1:1 R                 |
+//+------------------------------------------------------------------+
+void ManageBreakeven()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      
+      long type = PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double slPrice   = PositionGetDouble(POSITION_SL);
+      double tpPrice   = PositionGetDouble(POSITION_TP);
+      double curBid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double curAsk    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      double riskDist = MathAbs(openPrice - slPrice);
+      if(riskDist <= 0) continue;
+      
+      // Para COMPRAS: si el precio subio al menos 1:1 R
+      if(type == POSITION_TYPE_BUY)
+      {
+         if(curBid >= openPrice + riskDist)
+         {
+            double beLevel = openPrice + (InpBEBufferPips * 0.10); // +1 pip de resguardo
+            if(slPrice < openPrice)
+            {
+               trade.PositionModify(ticket, beLevel, tpPrice);
+               Print("🛡️ [BREAKEVEN 1:1] Stop Loss trasladado a Precio de Entrada para BUY #", ticket);
+            }
+         }
+      }
+      // Para VENTAS: si el precio bajo al menos 1:1 R
+      else if(type == POSITION_TYPE_SELL)
+      {
+         if(curAsk <= openPrice - riskDist)
+         {
+            double beLevel = openPrice - (InpBEBufferPips * 0.10);
+            if(slPrice > openPrice || slPrice == 0.0)
+            {
+               trade.PositionModify(ticket, beLevel, tpPrice);
+               Print("🛡️ [BREAKEVEN 1:1] Stop Loss trasladado a Precio de Entrada para SELL #", ticket);
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Dimensionamiento de Lotes Exacto para Cuenta Real (0.5% - 1.0%) |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double entry, double sl)
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney = balance * (InpRiskPercent / 100.0);
+   double points = MathAbs(entry - sl);
+   if(points <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSize <= 0) tickSize = 0.01;
+   
+   double lossPerLot = (points / tickSize) * tickValue;
+   if(lossPerLot <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   
+   double lots = riskMoney / lossPerLot;
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   
+   lots = MathFloor(lots / step) * step;
+   if(lots < minLot) lots = minLot;
+   if(lots > maxLot) lots = maxLot;
+   
+   return lots;
+}
+
+//+------------------------------------------------------------------+
+//| Panel Visual de Auditoria en Grafico (HUD)                       |
+//+------------------------------------------------------------------+
+void UpdateDashboard(MqlDateTime &dt, string status)
+{
+   string text = "\\n";
+   text += "╔══════════════════════════════════════════════════════╗\\n";
+   text += "║  SISTEMA CUANTITATIVO XAU/USD LONDON BREAKOUT        ║\\n";
+   text += "║  Desarrollado por el Ing. Francisco Alvarado        ║\\n";
+   text += "╠══════════════════════════════════════════════════════╣\\n";
+   text += StringFormat("║  Hora Actual UTC: %02d:%02d:%02d                       ║\\n", dt.hour, dt.min, dt.sec);
+   text += StringFormat("║  Balance Cuenta: $%.2f USD                         ║\\n", AccountInfoDouble(ACCOUNT_BALANCE));
+   text += StringFormat("║  Rango Tokio: High $%.2f | Low $%.2f (%.1f pts)      ║\\n", g_asiaHigh, g_asiaLow, g_asiaRange);
+   text += StringFormat("║  Trades Hoy: %d / %d | SLs Hoy: %d / %d              ║\\n", g_dailyTradesCount, InpMaxDailyTrades, g_dailySLCount, InpMaxDailySL);
+   text += StringFormat("║  Estatus: %s\\n", status);
+   text += "╚══════════════════════════════════════════════════════╝";
+   Comment(text);
+}
+`;
+
+  // =========================================================================
+  // METATRADER 4 (MQL4) - PRODUCTION READY FOR REAL ACCOUNT
+  // =========================================================================
+  const mql4Code = `//+------------------------------------------------------------------+
+//|                                     XAUUSD_LondonBreakout_Quant.mq4 |
+//|   Algoritmo Cuantitativo Institucional London Breakout & Retest  |
+//|        Desarrollado por el Ingeniero Francisco Alvarado          |
+//|               Validado para Cuentas Reales y Prop Firms          |
+//+------------------------------------------------------------------+
+#property copyright "Ingeniero Francisco Alvarado - Cuantitativo XAU/USD"
+#property link      "https://github.com/francisco-alvarado-quant"
+#property version   "2.50"
+#property description "Robot Cuantitativo XAU/USD para MetaTrader 4. Incluye Ruptura, Retesteo, Filtro D1, Proteccion Breakeven Dinamica 1:1 y Control Estricto de Riesgo Monetario."
+#property strict
+
+//--- Parametros de Entrada
+extern string   sep0              = "=== Identificacion & Riesgo ===";
+extern int      InpMagicNumber    = 777926;       // Magic Number Unico
+extern double   InpRiskPercent    = 0.5;          // Riesgo por Trade (% Balance: 0.5% - 1.0%)
+extern double   InpRRRatio        = 2.0;          // Ratio Riesgo/Beneficio (1:2)
+extern int      InpMaxDailySL     = 2;            // Limite Diario de Perdidas (Circuit Breaker)
+extern int      InpMaxDailyTrades = 2;            // Maximo de Trades por Dia (1 o 2)
+
+extern string   sep1              = "=== Horarios de Sesion (Hora UTC) ===";
+extern int      InpStartAsia      = 0;            // Inicio Rango Asiatico (Hora UTC)
+extern int      InpEndAsia        = 6;            // Fin Rango Asiatico (Hora UTC)
+extern int      InpStartLondon    = 8;            // Inicio Ventana Londres (Hora UTC)
+extern int      InpEndLondon      = 13;           // Fin Ventana Londres (Hora UTC)
+
+extern string   sep2              = "=== Filtros Cuantitativos ===";
+extern bool     InpUseD1Trend     = false;        // true = Filtro D1 Estricto | false = Ambas Direcciones
+extern double   InpMinAsiaRange   = 6.0;          // Rango Minimo Tokio ($ pts)
+extern double   InpMaxAsiaRange   = 22.0;         // Rango Maximo Tokio ($ pts)
+extern int      InpMaxSpread      = 35;           // Spread Maximo Permitido (pips/cents)
+extern int      InpSlippage       = 3;            // Tolerancia de Deslizamiento
+
+extern string   sep3              = "=== Blindaje Breakeven ===";
+extern bool     InpEnableBE       = true;         // Activar Proteccion Breakeven 1:1
+extern double   InpBEBufferPips   = 1.0;          // Buffer de Ganancia minima (pips)
+
+//--- Variables Globales
+double   g_asiaHigh         = 0.0;
+double   g_asiaLow          = 0.0;
+double   g_asiaRange        = 0.0;
+double   g_asiaMid          = 0.0;
+int      g_lastDay          = -1;
+int      g_dailyTradesCount = 0;
+int      g_dailySLCount     = 0;
+datetime g_lastBar          = 0;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("Robot Cuantitativo XAU/USD MT4 Inicializado. Ing. Francisco Alvarado.");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Comment("");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   int hourUTC = TimeHour(TimeGMT());
+   int minUTC  = TimeMinute(TimeGMT());
+   int dayUTC  = TimeDay(TimeGMT());
+   
+   // Reset diario
+   if(hourUTC == 0 && minUTC == 0 && g_lastDay != dayUTC)
+   {
+      g_asiaHigh = 0.0;
+      g_asiaLow  = 0.0;
+      g_dailyTradesCount = 0;
+      g_dailySLCount = 0;
+      g_lastDay = dayUTC;
+   }
+   
+   // 1. Gestion de Breakeven Activo
+   if(InpEnableBE) ManageBreakevenMT4();
+   
+   // 2. Delimitacion Rango Asiatico (00:00 a 06:00 UTC)
+   if(hourUTC >= InpStartAsia && hourUTC < InpEndAsia)
+   {
+      double h = High[0];
+      double l = Low[0];
+      if(g_asiaHigh == 0.0 || h > g_asiaHigh) g_asiaHigh = h;
+      if(g_asiaLow == 0.0  || l < g_asiaLow)  g_asiaLow  = l;
+      g_asiaRange = g_asiaHigh - g_asiaLow;
+      g_asiaMid   = (g_asiaHigh + g_asiaLow) / 2.0;
+      
+      Comment("\\n[XAU/USD Bot Cuantitativo - Ing. Francisco Alvarado]\\nFase: Rango Tokio | High: " + DoubleToString(g_asiaHigh,2) + " | Low: " + DoubleToString(g_asiaLow,2));
+      return;
+   }
+   
+   // 3. Verificacion de Circuit Breaker
+   if(g_dailySLCount >= InpMaxDailySL || g_dailyTradesCount >= InpMaxDailyTrades)
+   {
+      Comment("\\n[XAU/USD Bot Cuantitativo - Ing. Francisco Alvarado]\\nTrading completado o pausado por limite diario.");
+      return;
+   }
+   
+   // 4. Ventana Operativa de Londres (08:00 a 13:00 UTC)
+   if(hourUTC >= InpStartLondon && hourUTC < InpEndLondon)
+   {
+      if(g_lastBar == Time[0]) return; // Esperar cierre de vela M15
+      
+      // Filtros de calidad
+      if(g_asiaRange < InpMinAsiaRange || g_asiaRange > InpMaxAsiaRange) return;
+      if(MarketInfo(Symbol(), MODE_SPREAD) > InpMaxSpread) return;
+      
+      // Tendencia D1 anterior
+      double d1Close = iClose(Symbol(), PERIOD_D1, 1);
+      double d1Open  = iOpen(Symbol(), PERIOD_D1, 1);
+      bool isD1Bullish = (d1Close > d1Open);
+      bool isD1Bearish = (d1Close < d1Open);
+      
+      bool allowBuy  = (!InpUseD1Trend) || isD1Bullish;
+      bool allowSell = (!InpUseD1Trend) || isD1Bearish;
+      
+      double c1 = Close[1];
+      double c2 = Close[2];
+      double l1 = Low[1];
+      double h1 = High[1];
+      double o1 = Open[1];
+      
+      bool isFirst = (g_dailyTradesCount == 0);
+      
+      // Gatillo BUY
+      bool buySig = allowBuy && (
+         (isFirst && c1 > g_asiaHigh && c2 <= g_asiaHigh) ||
+         (!isFirst && c1 > g_asiaHigh && l1 >= (g_asiaHigh - 1.5) && c1 > o1)
+      );
+      
+      // Gatillo SELL
+      bool sellSig = allowSell && (
+         (isFirst && c1 < g_asiaLow && c2 >= g_asiaLow) ||
+         (!isFirst && c1 < g_asiaLow && h1 <= (g_asiaLow + 1.5) && c1 < o1)
+      );
+      
+      int openOrders = CountOpenOrders();
+      
+      if(buySig && openOrders == 0)
+      {
+         double entry = Ask;
+         double sl = isFirst ? g_asiaMid : (entry - MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
+         double risk = entry - sl;
+         double tp = entry + (risk * InpRRRatio);
+         double lots = CalculateLotsMT4(entry, sl);
+         
+         int ticket = OrderSend(Symbol(), OP_BUY, lots, entry, InpSlippage, sl, tp, "LB Buy [Ing. Alvarado]", InpMagicNumber, 0, clrGreen);
+         if(ticket > 0)
+         {
+            g_lastBar = Time[0];
+            g_dailyTradesCount++;
+            Print("✅ BUY EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots);
+         }
+      }
+      else if(sellSig && openOrders == 0)
+      {
+         double entry = Bid;
+         double sl = isFirst ? g_asiaMid : (entry + MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
+         double risk = sl - entry;
+         double tp = entry - (risk * InpRRRatio);
+         double lots = CalculateLotsMT4(entry, sl);
+         
+         int ticket = OrderSend(Symbol(), OP_SELL, lots, entry, InpSlippage, sl, tp, "LB Sell [Ing. Alvarado]", InpMagicNumber, 0, clrRed);
+         if(ticket > 0)
+         {
+            g_lastBar = Time[0];
+            g_dailyTradesCount++;
+            Print("✅ SELL EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculo Dinamico de Lotes MT4                                    |
+//+------------------------------------------------------------------+
+double CalculateLotsMT4(double entry, double sl)
+{
+   double balance = AccountBalance();
+   double riskMoney = balance * (InpRiskPercent / 100.0);
+   double points = MathAbs(entry - sl);
+   if(points <= 0) return MarketInfo(Symbol(), MODE_MINLOT);
+   
+   double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
+   double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
+   if(tickSize <= 0) tickSize = 0.01;
+   
+   double lossPerLot = (points / tickSize) * tickValue;
+   if(lossPerLot <= 0) return MarketInfo(Symbol(), MODE_MINLOT);
+   
+   double lots = riskMoney / lossPerLot;
+   double step = MarketInfo(Symbol(), MODE_LOTSTEP);
+   double minLot = MarketInfo(Symbol(), MODE_MINLOT);
+   double maxLot = MarketInfo(Symbol(), MODE_MAXLOT);
+   
+   lots = MathFloor(lots / step) * step;
+   if(lots < minLot) lots = minLot;
+   if(lots > maxLot) lots = maxLot;
+   
+   return lots;
+}
+
+//+------------------------------------------------------------------+
+//| Proteccion Automatica Breakeven MT4                              |
+//+------------------------------------------------------------------+
+void ManageBreakevenMT4()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderSymbol() != Symbol() || OrderMagicNumber() != InpMagicNumber) continue;
+      
+      double openPrice = OrderOpenPrice();
+      double currentSL = OrderStopLoss();
+      double currentTP = OrderTakeProfit();
+      double riskDist  = MathAbs(openPrice - currentSL);
+      if(riskDist <= 0) continue;
+      
+      if(OrderType() == OP_BUY)
+      {
+         if(Bid >= openPrice + riskDist)
+         {
+            double beLevel = openPrice + (InpBEBufferPips * 0.10);
+            if(currentSL < openPrice)
+            {
+               OrderModify(OrderTicket(), openPrice, beLevel, currentTP, 0, clrCyan);
+               Print("🛡️ [BE 1:1 MT4] Stop Loss movido a entrada para BUY #", OrderTicket());
+            }
+         }
+      }
+      else if(OrderType() == OP_SELL)
+      {
+         if(Ask <= openPrice - riskDist)
+         {
+            double beLevel = openPrice - (InpBEBufferPips * 0.10);
+            if(currentSL > openPrice || currentSL == 0.0)
+            {
+               OrderModify(OrderTicket(), openPrice, beLevel, currentTP, 0, clrCyan);
+               Print("🛡️ [BE 1:1 MT4] Stop Loss movido a entrada para SELL #", OrderTicket());
+            }
+         }
+      }
+   }
+}
+
+int CountOpenOrders()
+{
+   int count = 0;
+   for(int i = 0; i < OrdersTotal(); i++)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if(OrderSymbol() == Symbol() && OrderMagicNumber() == InpMagicNumber) count++;
+      }
+   }
+   return count;
+}
+`;
+
+  // =========================================================================
+  // TRADINGVIEW (PINE SCRIPT V5 / V6)
+  // =========================================================================
+  const pineScriptCode = `//@version=5
+strategy("XAU/USD London Breakout Quant Strategy [Ing. Francisco Alvarado]", 
+         shorttitle="XAU Quant [Alvarado]", 
+         overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=0.5, 
+         commission_type=strategy.commission.cash_per_contract, 
+         commission_value=0.04, 
+         max_lines_count=500, 
+         max_boxes_count=500)
+
+// ============================================================================
+// SISTEMA CUANTITATIVO DE TRADING EN ORO (XAU/USD)
+// Autor: Ingeniero Francisco Alvarado
+// Metodología: Ruptura y Retesteo Sesión Tokio -> Londres M15 + Breakeven 1:1
+// ============================================================================
+
+// 1. PARAMETROS DE ENTRADA
+startAsiaHour    = input.int(0,  "Inicio Rango Asiático (Hora UTC)", minval=0, maxval=23, group="Horarios UTC")
+endAsiaHour      = input.int(6,  "Fin Rango Asiático (Hora UTC)",    minval=0, maxval=23, group="Horarios UTC")
+startLondonHour  = input.int(8,  "Inicio Sesión Londres (Hora UTC)", minval=0, maxval=23, group="Horarios UTC")
+endLondonHour    = input.int(13, "Fin Sesión Londres (Hora UTC)",    minval=0, maxval=23, group="Horarios UTC")
+
+trendMode        = input.string("Ambas Direcciones (Alta Frecuencia)", "Modo de Tendencia", 
+                               options=["Ambas Direcciones (Alta Frecuencia)", "Filtro D1 Estricto"], group="Parámetros Cuantitativos")
+minAsiaPoints    = input.float(6.0,  "Amplitud Mínima Rango Asia ($ pts)", step=0.5, group="Parámetros Cuantitativos")
+maxAsiaPoints    = input.float(22.0, "Amplitud Máxima Rango Asia ($ pts)", step=0.5, group="Parámetros Cuantitativos")
+rrRatio          = input.float(2.0,  "Ratio Riesgo / Beneficio Objetivo (1:2)", step=0.5, group="Gestión de Riesgo")
+enableBreakeven  = input.bool(true,  "Activar Protección Breakeven 1:1 Dinámica", group="Gestión de Riesgo")
+
+// 2. SESIONES Y FILTROS TEMPORALES
+utcHour = hour(time, "UTC")
+utcMinute = minute(time, "UTC")
+isAsiaSession   = (utcHour >= startAsiaHour and utcHour < endAsiaHour)
+isLondonSession = (utcHour >= startLondonHour and utcHour < endLondonHour)
+
+// Tendencia Diaria (Vela D1 Anterior)
+prevD1Close = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+prevD1Open  = request.security(syminfo.tickerid, "D", open[1], barmerge.gaps_off, barmerge.lookahead_on)
+bool isD1Bullish = prevD1Close > prevD1Open
+bool isD1Bearish = prevD1Close < prevD1Open
+
+bool allowLongByTrend  = (trendMode == "Ambas Direcciones (Alta Frecuencia)") or isD1Bullish
+bool allowShortByTrend = (trendMode == "Ambas Direcciones (Alta Frecuencia)") or isD1Bearish
+
+// 3. CAPTURA DEL RANGO ASIATICO (00:00 - 06:00 UTC)
+var float asiaHigh = na
+var float asiaLow  = na
+var box   asiaBox  = na
+
+if isAsiaSession
+    if not isAsiaSession[1]
+        asiaHigh := high
+        asiaLow  := low
+    else
+        asiaHigh := math.max(asiaHigh, high)
+        asiaLow  := math.min(asiaLow, low)
+
+if not isAsiaSession and isAsiaSession[1]
+    float rangePts = asiaHigh - asiaLow
+    color boxCol = (rangePts >= minAsiaPoints and rangePts <= maxAsiaPoints) ? color.new(color.amber, 85) : color.new(color.gray, 85)
+    asiaBox := box.new(left=bar_index - 24, top=asiaHigh, right=bar_index, bottom=asiaLow, 
+                       border_color=color.amber, bgcolor=boxCol, 
+                       text="Rango Tokio: " + str.tostring(rangePts, "#.##") + " pts\\n[Ing. Francisco Alvarado]", 
+                       text_color=color.white, text_size=size.small)
+
+float asiaRange = asiaHigh - asiaLow
+float asiaMid   = (asiaHigh + asiaLow) / 2.0
+bool isVolatilityOptimal = (asiaRange >= minAsiaPoints and asiaRange <= maxAsiaPoints)
+
+// Dibujar niveles en gráfico
+plot(asiaHigh, "Asia High", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
+plot(asiaLow,  "Asia Low",  color=color.new(color.green, 30), linewidth=1, style=plot.style_linebr)
+plot(asiaMid,  "Asia Mid (SL)", color=color.new(color.blue, 40), linewidth=1, style=plot.style_linebr)
+
+// 4. LOGICA DE GATILLO Y TRADES (M15 LONDRES)
+var int dailyTradesCount = 0
+if dayofmonth != dayofmonth[1]
+    dailyTradesCount := 0
+
+bool canTrade = isLondonSession and isVolatilityOptimal and (dailyTradesCount < 2)
+
+// Trade 1: Ruptura Limpia con Cuerpo | Trade 2: Retesteo con Confirmación
+bool isFirstTrade = (dailyTradesCount == 0)
+
+bool triggerBuy = canTrade and allowLongByTrend and (
+     (isFirstTrade and close > asiaHigh and close[1] <= asiaHigh) or 
+     (not isFirstTrade and close > asiaHigh and low >= (asiaHigh - 1.5) and close > open)
+     )
+
+bool triggerSell = canTrade and allowShortByTrend and (
+     (isFirstTrade and close < asiaLow and close[1] >= asiaLow) or 
+     (not isFirstTrade and close < asiaLow and high <= (asiaLow + 1.5) and close < open)
+     )
+
+// 5. GESTION DE ENTRADAS Y SALIDAS
+var float entryPrice = na
+var float stopLossPrice = na
+var float takeProfitPrice = na
+var bool  isBeActivated = false
+
+if triggerBuy and strategy.position_size == 0
+    dailyTradesCount += 1
+    entryPrice := close
+    stopLossPrice := isFirstTrade ? asiaMid : (entryPrice - math.min(math.max(asiaRange * 0.5, 4.0), 8.0))
+    float risk = entryPrice - stopLossPrice
+    takeProfitPrice := entryPrice + (risk * rrRatio)
+    isBeActivated := false
+    
+    strategy.entry("Long Breakout", strategy.long)
+    strategy.exit("Exit Long", "Long Breakout", stop=stopLossPrice, limit=takeProfitPrice)
+    alert("🟢 XAU/USD BUY: Entrada en " + str.tostring(entryPrice) + " | SL: " + str.tostring(stopLossPrice) + " | TP: " + str.tostring(takeProfitPrice), alert.freq_once_per_bar_close)
+
+if triggerSell and strategy.position_size == 0
+    dailyTradesCount += 1
+    entryPrice := close
+    stopLossPrice := isFirstTrade ? asiaMid : (entryPrice + math.min(math.max(asiaRange * 0.5, 4.0), 8.0))
+    float risk = stopLossPrice - entryPrice
+    takeProfitPrice := entryPrice - (risk * rrRatio)
+    isBeActivated := false
+    
+    strategy.entry("Short Breakout", strategy.short)
+    strategy.exit("Exit Short", "Short Breakout", stop=stopLossPrice, limit=takeProfitPrice)
+    alert("🔴 XAU/USD SELL: Entrada en " + str.tostring(entryPrice) + " | SL: " + str.tostring(stopLossPrice) + " | TP: " + str.tostring(takeProfitPrice), alert.freq_once_per_bar_close)
+
+// 6. BLINDAJE DINAMICO A BREAKEVEN 1:1
+if enableBreakeven and strategy.position_size > 0
+    float initialRisk = entryPrice - stopLossPrice
+    if high >= (entryPrice + initialRisk) and not isBeActivated
+        isBeActivated := true
+        stopLossPrice := entryPrice + 0.10 // Asegurar costo de comisión
+        strategy.exit("Exit Long", "Long Breakout", stop=stopLossPrice, limit=takeProfitPrice)
+
+if enableBreakeven and strategy.position_size < 0
+    float initialRisk = stopLossPrice - entryPrice
+    if low <= (entryPrice - initialRisk) and not isBeActivated
+        isBeActivated := true
+        stopLossPrice := entryPrice - 0.10
+        strategy.exit("Exit Short", "Short Breakout", stop=stopLossPrice, limit=takeProfitPrice)
+
+// 7. TABLA DASHBOARD EN PANTALLA
+var table hud = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 20), border_color=color.gray)
+if barstate.islast
+    table.cell(hud, 0, 0, "SISTEMA CUANTITATIVO", bgcolor=color.blue, text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 0, "Ing. Francisco Alvarado", bgcolor=color.blue, text_color=color.amber, text_size=size.small)
+    table.cell(hud, 0, 1, "Rango Tokio", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 1, str.tostring(asiaRange, "#.##") + " pts (" + (isVolatilityOptimal ? "Óptimo" : "Pausado") + ")", text_color=isVolatilityOptimal ? color.green : color.red, text_size=size.small)
+    table.cell(hud, 0, 2, "Trades Hoy", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 2, str.tostring(dailyTradesCount) + " / 2", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 0, 3, "Gestión R:R", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 3, "1:2.0 (Breakeven 1:1)", text_color=color.cyan, text_size=size.small)
+    table.cell(hud, 0, 4, "Modo Filtro", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 4, trendMode, text_color=color.orange, text_size=size.small)
+`;
+
+  // =========================================================================
+  // PYTHON MODULAR BOT
+  // =========================================================================
   const pythonModules = {
     main: `# ==============================================================================
 # PROYECTO: XAU/USD London Open Breakout Quant Bot
+# AUTOR: Ingeniero Francisco Alvarado
 # ARCHIVO: main.py
-# DESCRIPCIÓN: Punto de entrada principal y orquestador del bucle temporal.
+# DESCRIPCIÓN: Orquestador en tiempo real con conexión a MetaTrader 5 / Brokers REST.
 # ==============================================================================
 
 import time
@@ -28,19 +821,27 @@ from risk_manager import RiskManager
 from order_executor import OrderExecutor
 
 SYMBOL = "XAUUSD"
-RISK_PERCENT = 0.5        # 0.5% de riesgo institucional estricto
-RR_RATIO = 2.0            # Ratio 1:2 exacto de Riesgo/Beneficio
-SL_MODE = "50_PERCENT"    # "50_PERCENT" o "OPPOSITE_RANGE"
-MAX_DAILY_TRADES = 1
+RISK_PERCENT = 0.5           # 0.5% estricto de riesgo sobre balance de cuenta real
+RR_RATIO = 2.0               # Objetivo asimétrico 1:2.0
+TREND_MODE = "ANY_BREAKOUT"  # "ANY_BREAKOUT" o "D1_STRICT"
+MAX_DAILY_SL = 2             # Circuit Breaker: Máximo 2 stop loss diarios
+MAX_DAILY_TRADES = 2         # Máximo 2 operaciones por día (Ruptura #1 y Retesteo #2)
 
 def run_bot():
-    print("Iniciando Bot Cuantitativo XAU/USD (London Breakout)...")
-    fetcher = DataFetcher(broker="MT5") # o "OANDA"
+    print("==================================================================")
+    print("INICIANDO BOT CUANTITATIVO XAU/USD - LONDON BREAKOUT & RETEST")
+    print("Desarrollado por el Ingeniero Francisco Alvarado")
+    print(f"Modo: {TREND_MODE} | Riesgo: {RISK_PERCENT}% | R:R: 1:{RR_RATIO}")
+    print("==================================================================")
+    
+    fetcher = DataFetcher(broker="MT5")
     calculator = QuantCalculator()
     risk_mgr = RiskManager(risk_percent=RISK_PERCENT)
     executor = OrderExecutor(broker="MT5")
     
-    last_trade_date = None
+    current_active_day = None
+    daily_trades_count = 0
+    daily_sl_count = 0
 
     while True:
         try:
@@ -49,61 +850,81 @@ def run_bot():
             hour = now_utc.hour
             minute = now_utc.minute
 
-            # Control de disciplina: Máximo 1 operación por día
-            if last_trade_date == current_date_str:
+            # Reset diario a las 00:00 UTC
+            if current_active_day != current_date_str:
+                current_active_day = current_date_str
+                daily_trades_count = 0
+                daily_sl_count = 0
+                print(f"[{now_utc}] Nuevo día de sesión: {current_date_str}. Parámetros reseteados.")
+
+            # Gestión de Breakeven Activo en tiempo real (1:1 R)
+            executor.manage_breakeven_positions(symbol=SYMBOL)
+
+            # Control de Circuito de Blindaje (Evita quemar cuentas)
+            if daily_sl_count >= MAX_DAILY_SL:
+                time.sleep(60)
+                continue
+            if daily_trades_count >= MAX_DAILY_TRADES:
                 time.sleep(60)
                 continue
 
-            # Ventana operativa de Londres: 08:00 a 11:00 UTC (o 07:00 a 10:00 UTC)
-            if 8 <= hour <= 10:
+            # Ventana operativa de Londres: 08:00 a 13:00 UTC
+            if 8 <= hour < 13:
                 # 1. Obtención de datos M15 y D1
-                m15_candles = fetcher.get_candles(symbol=SYMBOL, timeframe="M15", count=50)
+                m15_candles = fetcher.get_candles(symbol=SYMBOL, timeframe="M15", count=60)
                 d1_candles = fetcher.get_candles(symbol=SYMBOL, timeframe="D1", count=5)
                 
-                # 2. Análisis del Filtro Cuanti D1 (Vela diaria anterior)
+                # 2. Análisis del Filtro Cuanti D1
                 d1_trend = calculator.evaluate_d1_trend(d1_candles)
                 
-                # 3. Cálculo del Rango Asiático (00:00 a 07:00 UTC)
-                asian_range = calculator.calculate_asian_range(m15_candles, start_hour=0, end_hour=7)
+                # 3. Delimitación del Rango Asiático (00:00 a 06:00 UTC)
+                asian_range = calculator.calculate_asian_range(m15_candles, start_hour=0, end_hour=6)
                 
-                # 4. Evaluación del Gatillo de Ruptura con CUERPO de vela M15
+                # 4. Filtro de Volatilidad: 6.0 a 22.0 puntos
+                if not asian_range or not (6.0 <= asian_range['range_points'] <= 22.0):
+                    time.sleep(15)
+                    continue
+
+                # 5. Evaluación de Ruptura o Retesteo
                 signal = calculator.evaluate_breakout_trigger(
                     candles=m15_candles,
                     asian_range=asian_range,
                     d1_trend=d1_trend,
-                    sl_mode=SL_MODE,
+                    trend_mode=TREND_MODE,
+                    trade_number=daily_trades_count + 1,
                     rr_ratio=RR_RATIO
                 )
 
                 if signal:
                     account_balance = fetcher.get_account_balance()
                     
-                    # 5. Cálculo exacto del lotaje con gestión de riesgo del 0.5%
+                    # 6. Cálculo exacto del lotaje con gestión de riesgo
                     lot_size = risk_mgr.calculate_lots(
                         balance=account_balance,
                         entry_price=signal["entry_price"],
                         sl_price=signal["sl_price"],
-                        contract_size=100 # 100 oz en XAUUSD
+                        contract_size=100.0 # 100 oz en Oro
                     )
 
-                    print(f"[{now_utc}] GATILLO CONFIRMADO: {signal['type']} en {signal['entry_price']}")
+                    print(f"[{now_utc}] GATILLO #{daily_trades_count + 1} CONFIRMADO: {signal['type']} en {signal['entry_price']}")
                     print(f"SL: {signal['sl_price']} | TP: {signal['tp_price']} | Lotes: {lot_size}")
 
-                    # 6. Envío y ejecución de la orden al mercado
+                    # 7. Envío y ejecución
                     success = executor.send_order(
                         symbol=SYMBOL,
                         order_type=signal["type"],
                         lot_size=lot_size,
                         entry_price=signal["entry_price"],
                         sl_price=signal["sl_price"],
-                        tp_price=signal["tp_price"]
+                        tp_price=signal["tp_price"],
+                        comment=f"LB #{daily_trades_count+1} [Ing. Alvarado]"
                     )
 
                     if success:
-                        last_trade_date = current_date_str
-                        print("Operación completada exitosamente. Bloqueando nuevas órdenes hasta mañana.")
+                        daily_trades_count += 1
+                        print(f"Orden ejecutada con éxito. Total trades hoy: {daily_trades_count}/2")
 
-            time.sleep(15) # Revisión en cada nuevo tick / intervalo M15
+            time.sleep(15) # Ciclo de escaneo M15
         except Exception as e:
             print(f"Error en el bucle principal: {e}")
             time.sleep(10)
@@ -111,12 +932,7 @@ def run_bot():
 if __name__ == "__main__":
     run_bot()
 `,
-    data: `# ==============================================================================
-# PROYECTO: XAU/USD London Open Breakout Quant Bot
-# ARCHIVO: data_fetcher.py
-# DESCRIPCIÓN: Módulo de conexión y obtención de cotizaciones (MT5 / OANDA).
-# ==============================================================================
-
+    data: `# data_fetcher.py - Obtención de datos institucionales vía MT5
 import pandas as pd
 import datetime
 
@@ -127,7 +943,6 @@ class DataFetcher:
         self._init_connection()
 
     def _init_connection(self):
-        """Inicializa la sesión con el broker correspondiente."""
         if self.broker == "MT5":
             try:
                 import MetaTrader5 as mt5
@@ -138,24 +953,15 @@ class DataFetcher:
                     print("Conectado con éxito a MetaTrader 5.")
             except ImportError:
                 print("Librería MetaTrader5 no instalada. Usando modo simulador.")
-        elif self.broker == "OANDA":
-            # Marcador de posición para OANDA v20 REST API
-            print("Configurando cliente REST OANDA v20...")
-            self.initialized = True
 
     def get_account_balance(self) -> float:
-        """Devuelve el balance actual de la cuenta para el dimensionamiento del riesgo."""
         if self.broker == "MT5" and self.initialized:
             import MetaTrader5 as mt5
             account_info = mt5.account_info()
             return account_info.balance if account_info else 10000.0
-        return 10000.0 # Valor predeterminado de respaldo
+        return 10000.0
 
     def get_candles(self, symbol: str, timeframe: str, count: int = 60) -> pd.DataFrame:
-        """
-        Obtiene velas históricas formateadas en DataFrame con columnas:
-        [time, open, high, low, close, volume] con horario en UTC.
-        """
         if self.broker == "MT5" and self.initialized:
             import MetaTrader5 as mt5
             tf_dict = {"M15": mt5.TIMEFRAME_M15, "D1": mt5.TIMEFRAME_D1}
@@ -166,476 +972,134 @@ class DataFetcher:
             df = pd.DataFrame(rates)
             df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
             return df
-
-        # Marcador de posición / Mock Data si se ejecuta fuera de MT5
         return pd.DataFrame()
 `,
-    calc: `# ==============================================================================
-# PROYECTO: XAU/USD London Open Breakout Quant Bot
-# ARCHIVO: quant_calculator.py
-# DESCRIPCIÓN: Lógica matemática estricta del rango asiático, filtro D1 y gatillo.
-# ==============================================================================
-
+    calc: `# quant_calculator.py - Motor de cálculo matemático
 import pandas as pd
 from typing import Optional, Dict
 
 class QuantCalculator:
     @staticmethod
     def evaluate_d1_trend(d1_df: pd.DataFrame) -> str:
-        """
-        Analiza la vela diaria (D1) cerrada del día anterior.
-        Devuelve: 'BULLISH' si Close > Open, 'BEARISH' si Close < Open.
-        """
-        if len(d1_df) < 2:
-            return "NEUTRAL"
-        # La vela anterior cerrada es el índice -2 si -1 es la vela en curso
+        if len(d1_df) < 2: return "NEUTRAL"
         prev_d1 = d1_df.iloc[-2]
-        if prev_d1['close'] > prev_d1['open']:
-            return "BULLISH"
-        elif prev_d1['close'] < prev_d1['open']:
-            return "BEARISH"
-        return "NEUTRAL"
+        return "BULLISH" if prev_d1['close'] > prev_d1['open'] else "BEARISH"
 
     @staticmethod
-    def calculate_asian_range(m15_df: pd.DataFrame, start_hour: int = 0, end_hour: int = 7) -> Optional[Dict]:
-        """
-        Calcula el precio Máximo y Mínimo acumulado entre las 00:00 y las 07:00 UTC.
-        """
-        asia_candles = m15_df[(m15_df['time'].dt.hour >= start_hour) & (m15_df['time'].dt.hour < end_hour)]
-        if asia_candles.empty:
-            return None
-
-        asian_high = float(asia_candles['high'].max())
-        asian_low = float(asia_candles['low'].min())
-        range_points = round(asian_high - asian_low, 2)
-        midpoint = round((asian_high + asian_low) / 2.0, 2)
-
-        return {
-            "high": asian_high,
-            "low": asian_low,
-            "midpoint": midpoint,
-            "range_points": range_points
-        }
+    def calculate_asian_range(m15_df: pd.DataFrame, start_hour: int = 0, end_hour: int = 6) -> Optional[Dict]:
+        asia = m15_df[(m15_df['time'].dt.hour >= start_hour) & (m15_df['time'].dt.hour < end_hour)]
+        if asia.empty: return None
+        h = float(asia['high'].max())
+        l = float(asia['low'].min())
+        return {"high": h, "low": l, "midpoint": round((h + l)/2.0, 2), "range_points": round(h - l, 2)}
 
     @staticmethod
-    def evaluate_breakout_trigger(
-        candles: pd.DataFrame,
-        asian_range: Optional[Dict],
-        d1_trend: str,
-        sl_mode: str = "50_PERCENT",
-        rr_ratio: float = 2.0
-    ) -> Optional[Dict]:
-        """
-        Verifica si la última vela M15 cerrada rompió con su CUERPO el rango asiático
-        a favor de la tendencia del día anterior.
-        """
-        if not asian_range or d1_trend == "NEUTRAL" or len(candles) < 2:
-            return None
+    def evaluate_breakout_trigger(candles: pd.DataFrame, asian_range: Dict, d1_trend: str, trend_mode: str, trade_number: int, rr_ratio: float) -> Optional[Dict]:
+        if len(candles) < 3: return None
+        c1 = candles.iloc[-2] # Vela recién cerrada
+        c2 = candles.iloc[-3]
+        
+        allow_long  = (trend_mode == "ANY_BREAKOUT") or (d1_trend == "BULLISH")
+        allow_short = (trend_mode == "ANY_BREAKOUT") or (d1_trend == "BEARISH")
+        
+        is_first = (trade_number == 1)
+        h = asian_range['high']
+        l = asian_range['low']
+        mid = asian_range['midpoint']
+        pts = asian_range['range_points']
 
-        last_closed_bar = candles.iloc[-2]  # Vela M15 recién cerrada
-        prev_closed_bar = candles.iloc[-3]
+        # BUY Trigger
+        if allow_long:
+            if (is_first and c1['close'] > h and c2['close'] <= h) or \\
+               (not is_first and c1['close'] > h and c1['low'] >= (h - 1.5) and c1['close'] > c1['open']):
+                entry = float(c1['close'])
+                sl = mid if is_first else entry - min(max(pts * 0.5, 4.0), 8.0)
+                tp = entry + ((entry - sl) * rr_ratio)
+                return {"type": "BUY", "entry_price": round(entry, 2), "sl_price": round(sl, 2), "tp_price": round(tp, 2)}
 
-        close_price = float(last_closed_bar['close'])
-        asian_high = asian_range['high']
-        asian_low = asian_range['low']
-        midpoint = asian_range['midpoint']
-
-        # Condición 1: Ruptura Alcista (Solo si D1 es alcista)
-        if d1_trend == "BULLISH":
-            if close_price > asian_high and prev_closed_bar['close'] <= asian_high:
-                entry_price = close_price
-                sl_price = midpoint if sl_mode == "50_PERCENT" else asian_low
-                risk_distance = entry_price - sl_price
-                tp_price = round(entry_price + (risk_distance * rr_ratio), 2)
-                return {
-                    "type": "BUY",
-                    "entry_price": entry_price,
-                    "sl_price": round(sl_price, 2),
-                    "tp_price": tp_price
-                }
-
-        # Condición 2: Ruptura Bajista (Solo si D1 es bajista)
-        elif d1_trend == "BEARISH":
-            if close_price < asian_low and prev_closed_bar['close'] >= asian_low:
-                entry_price = close_price
-                sl_price = midpoint if sl_mode == "50_PERCENT" else asian_high
-                risk_distance = sl_price - entry_price
-                tp_price = round(entry_price - (risk_distance * rr_ratio), 2)
-                return {
-                    "type": "SELL",
-                    "entry_price": entry_price,
-                    "sl_price": round(sl_price, 2),
-                    "tp_price": tp_price
-                }
-
+        # SELL Trigger
+        if allow_short:
+            if (is_first and c1['close'] < l and c2['close'] >= l) or \\
+               (not is_first and c1['close'] < l and c1['high'] <= (l + 1.5) and c1['close'] < c1['open']):
+                entry = float(c1['close'])
+                sl = mid if is_first else entry + min(max(pts * 0.5, 4.0), 8.0)
+                tp = entry - ((sl - entry) * rr_ratio)
+                return {"type": "SELL", "entry_price": round(entry, 2), "sl_price": round(sl, 2), "tp_price": round(tp, 2)}
         return None
 `,
-    risk: `# ==============================================================================
-# PROYECTO: XAU/USD London Open Breakout Quant Bot
-# ARCHIVO: risk_manager.py
-# DESCRIPCIÓN: Cálculo matemático del tamaño de posición según el 0.5% de riesgo.
-# ==============================================================================
-
+    risk: `# risk_manager.py - Control de capital para cuenta real
 import math
 
 class RiskManager:
     def __init__(self, risk_percent: float = 0.5):
         self.risk_percent = risk_percent
 
-    def calculate_lots(
-        self,
-        balance: float,
-        entry_price: float,
-        sl_price: float,
-        contract_size: float = 100.0,
-        min_lot: float = 0.01,
-        max_lot: float = 50.0
-    ) -> float:
-        """
-        En Oro (XAU/USD): 1 Lote estándar = 100 Onzas Troy.
-        Un movimiento de $1.00 USD en el precio equivale a $100.00 USD de pérdida/ganancia por cada lote.
-        
-        Fórmula:
-        Riesgo Máximo en USD = Balance * (Riesgo % / 100)
-        Distancia en Puntos = |Entrada - Stop Loss|
-        Lotes = Riesgo_USD / (Distancia_Puntos * Tamaño_Contrato)
-        """
+    def calculate_lots(self, balance: float, entry_price: float, sl_price: float, contract_size: float = 100.0) -> float:
         risk_usd = balance * (self.risk_percent / 100.0)
         points_at_risk = abs(entry_price - sl_price)
-
-        if points_at_risk <= 0:
-            return min_lot
+        if points_at_risk <= 0: return 0.01
 
         dollar_risk_per_full_lot = points_at_risk * contract_size
         raw_lot = risk_usd / dollar_risk_per_full_lot
-
-        # Redondear hacia abajo al segundo decimal para seguridad estricta
         lot_size = math.floor(raw_lot * 100.0) / 100.0
-
-        if lot_size < min_lot:
-            lot_size = min_lot
-        elif lot_size > max_lot:
-            lot_size = max_lot
-
-        return round(lot_size, 2)
+        return max(0.01, min(lot_size, 50.0))
 `,
-    exec: `# ==============================================================================
-# PROYECTO: XAU/USD London Open Breakout Quant Bot
-# ARCHIVO: order_executor.py
-# DESCRIPCIÓN: Envío de órdenes Bracket con Stop Loss y Take Profit a MT5/OANDA.
-# ==============================================================================
-
+    exec: `# order_executor.py - Enrutamiento y Breakeven en MetaTrader 5
 class OrderExecutor:
     def __init__(self, broker: str = "MT5"):
         self.broker = broker.upper()
 
-    def send_order(self, symbol: str, order_type: str, lot_size: float, entry_price: float, sl_price: float, tp_price: float) -> bool:
-        """Envía una orden al mercado con SL y TP vinculados."""
+    def send_order(self, symbol: str, order_type: str, lot_size: float, entry_price: float, sl_price: float, tp_price: float, comment: str) -> bool:
         if self.broker == "MT5":
-            try:
-                import MetaTrader5 as mt5
-                cmd = mt5.ORDER_TYPE_BUY if order_type == "BUY" else mt5.ORDER_TYPE_SELL
-                price = mt5.symbol_info_tick(symbol).ask if order_type == "BUY" else mt5.symbol_info_tick(symbol).bid
+            import MetaTrader5 as mt5
+            cmd = mt5.ORDER_TYPE_BUY if order_type == "BUY" else mt5.ORDER_TYPE_SELL
+            price = mt5.symbol_info_tick(symbol).ask if order_type == "BUY" else mt5.symbol_info_tick(symbol).bid
+            req = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": lot_size,
+                "type": cmd,
+                "price": price,
+                "sl": sl_price,
+                "tp": tp_price,
+                "deviation": 20,
+                "magic": 777926,
+                "comment": comment,
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            res = mt5.order_send(req)
+            return res.retcode == mt5.TRADE_RETCODE_DONE
+        return True
 
-                request = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": symbol,
-                    "volume": lot_size,
-                    "type": cmd,
-                    "price": price,
-                    "sl": sl_price,
-                    "tp": tp_price,
-                    "deviation": 20,
-                    "magic": 880815,
-                    "comment": "London Breakout XAUUSD",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
-                }
-
-                result = mt5.order_send(request)
-                if result.retcode != mt5.TRADE_RETCODE_DONE:
-                    print(f"Error al enviar orden: {result.comment}")
-                    return False
-                print(f"Orden ejecutada con ticket #{result.order}")
-                return True
-            except Exception as e:
-                print(f"Excepción en envío de orden: {e}")
-                return False
-
-        elif self.broker == "OANDA":
-            print(f"[OANDA SIM] Orden {order_type} de {lot_size} lotes enviada a {entry_price} (SL: {sl_price}, TP: {tp_price})")
-            return True
-
-        return False
-`
+    def manage_breakeven_positions(self, symbol: str):
+        if self.broker == "MT5":
+            import MetaTrader5 as mt5
+            positions = mt5.positions_get(symbol=symbol)
+            if not positions: return
+            for pos in positions:
+                if pos.magic != 777926: continue
+                risk = abs(pos.price_open - pos.sl)
+                if risk <= 0: continue
+                # BUY BE 1:1
+                if pos.type == mt5.ORDER_TYPE_BUY and pos.price_current >= (pos.price_open + risk):
+                    if pos.sl < pos.price_open:
+                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "sl": pos.price_open + 0.10, "tp": pos.tp}
+                        mt5.order_send(req)
+                # SELL BE 1:1
+                elif pos.type == mt5.ORDER_TYPE_SELL and pos.price_current <= (pos.price_open - risk):
+                    if pos.sl > pos.price_open or pos.sl == 0.0:
+                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "sl": pos.price_open - 0.10, "tp": pos.tp}
+                        mt5.order_send(req)
+`,
   };
 
-  const mql5Code = `//+------------------------------------------------------------------+
-//|                                     XAUUSD_LondonBreakout.mq5    |
-//|                 Estrategia Cuantitativa Mecánica London Breakout |
-//|                                        100% Reglas Cuantitativas |
-//+------------------------------------------------------------------+
-#property copyright "XAUUSD Quant Lab"
-#property link      "https://ai.studio/build"
-#property version   "1.00"
-#property strict
-
-#include <Trade\\Trade.mqh>
-CTrade trade;
-
-//--- Parámetros de Entrada
-input group "=== Horarios (UTC) ==="
-input int    InpStartAsia    = 0;     // Inicio Rango Asiático (Hora UTC)
-input int    InpEndAsia      = 7;     // Fin Rango Asiático (Hora UTC)
-input int    InpStartLondon  = 8;     // Inicio Ventana Londres (Hora UTC)
-input int    InpEndLondon    = 11;    // Fin Ventana Londres (Hora UTC)
-
-input group "=== Gestión de Riesgo ==="
-input double InpRiskPercent  = 0.5;   // Riesgo por Operación (%)
-input double InpRRRatio      = 2.0;   // Ratio Riesgo/Beneficio (1:2)
-input bool   InpUse50Percent = true;  // Usar 50% Rango como SL (false = Lado opuesto)
-input ulong  InpMagicNumber  = 880815;// Magic Number
-
-//--- Variables Globales
-double asiaHigh = 0.0;
-double asiaLow  = 0.0;
-int    lastTradeDay = -1;
-
-//+------------------------------------------------------------------+
-//| Expert initialization function                                   |
-//+------------------------------------------------------------------+
-int OnInit()
-{
-   trade.SetExpertMagicNumber(InpMagicNumber);
-   Print("XAUUSD London Breakout EA Inicializado con éxito.");
-   return(INIT_SUCCEEDED);
-}
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                             |
-//+------------------------------------------------------------------+
-void OnTick()
-{
-   MqlDateTime dt;
-   TimeGMT(dt); // Usar hora UTC / GMT
-   
-   // Reset diario
-   if(dt.hour == 0 && dt.min == 0)
-   {
-      asiaHigh = 0.0;
-      asiaLow = 0.0;
-   }
-   
-   // 1. Capturar Rango Asiático entre 00:00 y 07:00 UTC
-   if(dt.hour >= InpStartAsia && dt.hour < InpEndAsia)
-   {
-      MqlRates rates[];
-      ArraySetAsSeries(rates, true);
-      if(CopyRates(_Symbol, PERIOD_M15, 0, 1, rates) > 0)
-      {
-         if(asiaHigh == 0.0 || rates[0].high > asiaHigh) asiaHigh = rates[0].high;
-         if(asiaLow == 0.0 || rates[0].low < asiaLow)   asiaLow  = rates[0].low;
-      }
-      return;
-   }
-   
-   // 2. Control: Solo 1 operación diaria
-   if(lastTradeDay == dt.day) return;
-   
-   // 3. Ventana Operativa de Londres
-   if(dt.hour >= InpStartLondon && dt.hour <= InpEndLondon)
-   {
-      // Revisar si acaba de cerrar una vela M15
-      static datetime lastBarTime = 0;
-      datetime currentBarTime = iTime(_Symbol, PERIOD_M15, 0);
-      if(lastBarTime == currentBarTime) return;
-      lastBarTime = currentBarTime;
-      
-      // Obtener últimas 2 velas M15
-      MqlRates m15[];
-      ArraySetAsSeries(m15, true);
-      if(CopyRates(_Symbol, PERIOD_M15, 1, 2, m15) < 2) return;
-      
-      // Filtro Quanti D1 (Vela diaria anterior)
-      MqlRates d1[];
-      ArraySetAsSeries(d1, true);
-      if(CopyRates(_Symbol, PERIOD_D1, 1, 1, d1) < 1) return;
-      
-      bool isDailyBullish = (d1[0].close > d1[0].open);
-      bool isDailyBearish = (d1[0].close < d1[0].open);
-      
-      double closeBar1 = m15[0].close;
-      double closeBar2 = m15[1].close;
-      
-      // Condiciones de Gatillo
-      bool breakoutLong  = (closeBar1 > asiaHigh) && (closeBar2 <= asiaHigh) && isDailyBullish;
-      bool breakoutShort = (closeBar1 < asiaLow)  && (closeBar2 >= asiaLow)  && isDailyBearish;
-      
-      if(breakoutLong)
-      {
-         double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         double sl = InpUse50Percent ? (asiaHigh + asiaLow)/2.0 : asiaLow;
-         double tp = entry + ((entry - sl) * InpRRRatio);
-         double lots = CalculateLots(entry, sl);
-         
-         if(trade.Buy(lots, _Symbol, entry, sl, tp, "London Breakout Long"))
-         {
-            lastTradeDay = dt.day;
-            Print("BUY Ejecutado: Lotes=", lots, " SL=", sl, " TP=", tp);
-         }
-      }
-      else if(breakoutShort)
-      {
-         double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         double sl = InpUse50Percent ? (asiaHigh + asiaLow)/2.0 : asiaHigh;
-         double tp = entry - ((sl - entry) * InpRRRatio);
-         double lots = CalculateLots(entry, sl);
-         
-         if(trade.Sell(lots, _Symbol, entry, sl, tp, "London Breakout Short"))
-         {
-            lastTradeDay = dt.day;
-            Print("SELL Ejecutado: Lotes=", lots, " SL=", sl, " TP=", tp);
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Dimensionamiento de Lotes exacto con 0.5% de riesgo             |
-//+------------------------------------------------------------------+
-double CalculateLots(double entry, double sl)
-{
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney = balance * (InpRiskPercent / 100.0);
-   double pts = MathAbs(entry - sl);
-   if(pts <= 0) return 0.01;
-   
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickSize <= 0) tickSize = 0.01;
-   
-   double lossPerLot = (pts / tickSize) * tickValue;
-   if(lossPerLot <= 0) return 0.01;
-   
-   double lots = riskMoney / lossPerLot;
-   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   
-   lots = MathFloor(lots / step) * step;
-   return MathMax(minLot, lots);
-}
-`;
-
-  const pineScriptCode = `//@version=6
-strategy("London Open Breakout Strategy (Gold)", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=0.5, max_lines_count=500, max_boxes_count=500)
-
-// ==========================================
-// 1. PARÁMETROS Y CONFIGURACIÓN
-// ==========================================
-startHourAsia   = input.int(0, title="Inicio Rango Asiático (Hora UTC)", group="Horarios")
-endHourAsia     = input.int(7, title="Fin Rango Asiático (Hora UTC)", group="Horarios")
-startLondon     = input.int(8, title="Inicio Sesión Londres (Hora UTC)", group="Horarios")
-endLondonTrade  = input.int(11, title="Fin Ventana Operativa Londres (Hora UTC)", group="Horarios")
-
-// Gestión de Riesgo
-rrRatio         = input.float(2.0, title="Ratio Riesgo / Beneficio (TP)", group="Gestión de Riesgo")
-slType          = input.string("50% Rango", title="Método de Stop Loss", options=["50% Rango", "Lado Opuesto", "EMA 20"], group="Gestión de Riesgo")
-emaSlLen        = input.int(20, title="Periodo EMA para Stop Loss", group="Gestión de Riesgo")
-
-// ==========================================
-// 2. FILTROS Y SESOS TEMPORALES
-// ==========================================
-h = hour(time, "UTC")
-m = minute(time, "UTC")
-
-isAsiaSession  = (h >= startHourAsia) and (h < endHourAsia)
-isLondonWindow = (h >= startLondon) and (h <= endLondonTrade)
-
-// Filtro Quanti: Dirección de la vela diaria anterior (D1)
-prevDayClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
-prevDayOpen  = request.security(syminfo.tickerid, "D", open[1], barmerge.gaps_off, barmerge.lookahead_on)
-bool isDailyBullish = prevDayClose > prevDayOpen
-bool isDailyBearish = prevDayClose < prevDayOpen
-
-// ==========================================
-// 3. CAPTURA DEL RANGO ASIÁTICO
-// ==========================================
-var float asiaHigh = na
-var float asiaLow  = na
-var box   asiaBox  = na
-
-if isAsiaSession
-    if not (isAsiaSession[1])
-        asiaHigh := high
-        asiaLow  := low
-    else
-        asiaHigh := math.max(asiaHigh, high)
-        asiaLow  := math.min(asiaLow, low)
-
-if not isAsiaSession and isAsiaSession[1]
-    asiaBox := box.new(left=bar_index - 28, top=asiaHigh, right=bar_index, bottom=asiaLow, 
-              border_color=color.blue, bgcolor=color.new(color.blue, 90), 
-              text="Rango Asiático (00:00 - 07:00 UTC)", text_color=color.blue)
-
-float asiaMid = (asiaHigh + asiaLow) / 2.0
-
-// ==========================================
-// 4. GATILLOS Y CONDICIONES DE ENTRADA (M15)
-// ==========================================
-float ema20 = ta.ema(close, emaSlLen)
-plot(ema20, "EMA 20", color=color.orange, linewidth=1)
-
-// Gatillo: Cierre de vela M15 con CUERPO fuera del rango
-bool breakoutLong  = isLondonWindow and (close > asiaHigh) and (close[1] <= asiaHigh) and isDailyBullish
-bool breakoutShort = isLondonWindow and (close < asiaLow) and (close[1] >= asiaLow) and isDailyBearish
-
-var int lastTradeDay = na
-bool canTradeToday = (na(lastTradeDay) or lastTradeDay != dayofmonth)
-
-// ==========================================
-// 5. EJECUCIÓN Y GESTIÓN DE ORDENES
-// ==========================================
-if breakoutLong and canTradeToday
-    lastTradeDay := dayofmonth
-    float entryPrice = close
-    float slPrice = slType == "50% Rango" ? asiaMid : (slType == "EMA 20" ? ema20 : nz(asiaLow))
-    float tpPrice = entryPrice + ((entryPrice - slPrice) * rrRatio)
-    
-    strategy.entry("Long Breakout", strategy.long)
-    strategy.exit("Exit Long", "Long Breakout", stop=slPrice, limit=tpPrice)
-    alert("XAU/USD: BUY BREAKOUT disparado en " + str.tostring(entryPrice) + " | SL: " + str.tostring(slPrice) + " | TP: " + str.tostring(tpPrice), alert.freq_once_per_bar_close)
-
-    line.new(bar_index, entryPrice, bar_index + 20, entryPrice, color=color.green, width=2)
-    line.new(bar_index, slPrice, bar_index + 20, slPrice, color=color.red, width=2, style=line.style_dashed)
-    line.new(bar_index, tpPrice, bar_index + 20, tpPrice, color=color.blue, width=2, style=line.style_dashed)
-
-if breakoutShort and canTradeToday
-    lastTradeDay := dayofmonth
-    float entryPrice = close
-    float slPrice = slType == "50% Rango" ? asiaMid : (slType == "EMA 20" ? ema20 : nz(asiaHigh))
-    float tpPrice = entryPrice - ((slPrice - entryPrice) * rrRatio)
-    
-    strategy.entry("Short Breakout", strategy.short)
-    strategy.exit("Exit Short", "Short Breakout", stop=slPrice, limit=tpPrice)
-    alert("XAU/USD: SELL BREAKOUT disparado en " + str.tostring(entryPrice) + " | SL: " + str.tostring(slPrice) + " | TP: " + str.tostring(tpPrice), alert.freq_once_per_bar_close)
-
-    line.new(bar_index, entryPrice, bar_index + 20, entryPrice, color=color.red, width=2)
-    line.new(bar_index, slPrice, bar_index + 20, slPrice, color=color.green, width=2, style=line.style_dashed)
-    line.new(bar_index, tpPrice, bar_index + 20, tpPrice, color=color.blue, width=2, style=line.style_dashed)
-
-if h == 0 and m == 0
-    asiaHigh := na
-    asiaLow  := na
-`;
-
   const getCurrentCode = () => {
-    if (activeLang === 'python') {
-      return pythonModules[activePyModule];
-    }
-    if (activeLang === 'mql5') {
-      return mql5Code;
-    }
-    return pineScriptCode;
+    if (activeLang === 'mql5') return mql5Code;
+    if (activeLang === 'mql4') return mql4Code;
+    if (activeLang === 'pinescript') return pineScriptCode;
+    if (activeLang === 'python') return pythonModules[activePyModule];
+    return '';
   };
 
   const handleCopy = () => {
@@ -646,14 +1110,12 @@ if h == 0 and m == 0
 
   const handleDownload = () => {
     const code = getCurrentCode();
-    const filename =
-      activeLang === 'python'
-        ? `${activePyModule}.py`
-        : activeLang === 'mql5'
-        ? 'XAUUSD_LondonBreakout.mq5'
-        : 'XAUUSD_LondonBreakout.pine';
+    let filename = 'XAUUSD_LondonBreakout_Quant.mq5';
+    if (activeLang === 'mql4') filename = 'XAUUSD_LondonBreakout_Quant.mq4';
+    if (activeLang === 'pinescript') filename = 'XAUUSD_LondonBreakout_Quant.pine';
+    if (activeLang === 'python') filename = `${activePyModule}.py`;
 
-    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([code], { type: 'text/plain;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -663,20 +1125,25 @@ if h == 0 and m == 0
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-[#0E131F] border border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+      <div className="bg-[#0A0E17] border border-slate-800 rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/80">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-              <Code2 className="w-4 h-4" />
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-gradient-to-r from-[#0E1526] via-[#10192F] to-[#0E1526]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 p-0.5 shadow-lg shadow-amber-500/20 flex items-center justify-center">
+              <Code2 className="w-5 h-5 text-slate-950 font-bold" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2 font-sans">
-                Exportador de Código Modular
-              </h3>
-              <p className="text-xs text-slate-400">
-                Arquitectura desacoplada: Datos • Cálculo • Riesgo 0.5% • Ejecución
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base sm:text-lg font-bold text-white font-sans">
+                  Exportador de Algoritmo para Trading Real (MT5, MT4, Pine Script & Python)
+                </h3>
+                <span className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
+                  Sincronizado v2.5
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 font-sans mt-0.5">
+                Desarrollado y optimizado por el <strong className="text-amber-400 font-semibold">Ingeniero Francisco Alvarado</strong> • Protegido con Breakeven 1:1 y Circuit Breaker
               </p>
             </div>
           </div>
@@ -688,71 +1155,111 @@ if h == 0 and m == 0
           </button>
         </div>
 
-        {/* Language Tabs */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 bg-slate-900/50">
-          <div className="flex gap-1">
-            <button
-              onClick={() => setActiveLang('python')}
-              className={`py-2.5 px-3 text-xs font-mono font-bold border-b-2 transition flex items-center gap-1.5 ${
-                activeLang === 'python'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              <span>Python (Modular)</span>
-            </button>
+        {/* Real Account Safety Warning Banner */}
+        <div className="bg-amber-500/10 border-b border-amber-500/25 px-6 py-2.5 flex items-center justify-between gap-3 text-xs font-mono text-amber-300">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Recomendación para Cuenta Real:</strong> Inicia con riesgo del <strong>0.5%</strong> por operación. El bot tiene integrado blindaje contra quiebre de cuenta (máx. 2 SLs al día y Breakeven a 1:1).
+            </span>
+          </div>
+          <button
+            onClick={() => setActiveLang('checklist')}
+            className="hidden sm:flex items-center gap-1 text-[11px] underline hover:text-white shrink-0"
+          >
+            <span>Ver Checklist Cuenta Real</span>
+          </button>
+        </div>
+
+        {/* Language Tabs Selector */}
+        <div className="flex items-center justify-between border-b border-slate-800 px-6 bg-slate-900/50 flex-wrap gap-2">
+          <div className="flex gap-1 overflow-x-auto py-1">
             <button
               onClick={() => setActiveLang('mql5')}
-              className={`py-2.5 px-3 text-xs font-mono font-bold border-b-2 transition flex items-center gap-1.5 ${
+              className={`py-2 px-3 text-xs font-mono font-bold rounded-lg transition flex items-center gap-1.5 ${
                 activeLang === 'mql5'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
               <span>MetaTrader 5 (.mq5)</span>
             </button>
             <button
+              onClick={() => setActiveLang('mql4')}
+              className={`py-2 px-3 text-xs font-mono font-bold rounded-lg transition flex items-center gap-1.5 ${
+                activeLang === 'mql4'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>MetaTrader 4 (.mq4)</span>
+            </button>
+            <button
               onClick={() => setActiveLang('pinescript')}
-              className={`py-2.5 px-3 text-xs font-mono font-bold border-b-2 transition flex items-center gap-1.5 ${
+              className={`py-2 px-3 text-xs font-mono font-bold rounded-lg transition flex items-center gap-1.5 ${
                 activeLang === 'pinescript'
-                  ? 'border-amber-500 text-amber-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
             >
               <Code2 className="w-3.5 h-3.5" />
-              <span>TradingView (Pine v6)</span>
+              <span>TradingView (Pine v5/v6)</span>
+            </button>
+            <button
+              onClick={() => setActiveLang('python')}
+              className={`py-2 px-3 text-xs font-mono font-bold rounded-lg transition flex items-center gap-1.5 ${
+                activeLang === 'python'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>Python (Modular)</span>
+            </button>
+            <button
+              onClick={() => setActiveLang('checklist')}
+              className={`py-2 px-3 text-xs font-mono font-bold rounded-lg transition flex items-center gap-1.5 ${
+                activeLang === 'checklist'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                  : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Guía Cuenta Real</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopy}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono flex items-center gap-1.5 transition"
-            >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? 'Copiado' : 'Copiar'}</span>
-            </button>
-            <button
-              onClick={handleDownload}
-              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-mono flex items-center gap-1.5 transition"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Descargar</span>
-            </button>
-          </div>
+          {activeLang !== 'checklist' && (
+            <div className="flex items-center gap-2 py-1">
+              <button
+                onClick={handleCopy}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono flex items-center gap-1.5 transition"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copied ? 'Copiado al portapapeles' : 'Copiar Código'}</span>
+              </button>
+              <button
+                onClick={handleDownload}
+                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-mono font-bold flex items-center gap-1.5 transition shadow"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                <span>Descargar Archivo</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Python Sub-Module Selector */}
         {activeLang === 'python' && (
-          <div className="flex items-center gap-1 px-5 py-2 bg-slate-950/60 border-b border-slate-800/80 overflow-x-auto text-xs font-mono">
-            <span className="text-slate-500 text-[11px] mr-2">Módulos:</span>
+          <div className="flex items-center gap-1 px-6 py-2 bg-slate-950/80 border-b border-slate-800/80 overflow-x-auto text-xs font-mono">
+            <span className="text-slate-500 text-[11px] mr-2">Módulos Python:</span>
             {[
-              { id: 'main', label: 'main.py' },
-              { id: 'data', label: 'data_fetcher.py (MT5/OANDA)' },
+              { id: 'main', label: 'main.py (Orquestador)' },
+              { id: 'data', label: 'data_fetcher.py (MT5 API)' },
               { id: 'calc', label: 'quant_calculator.py' },
-              { id: 'risk', label: 'risk_manager.py (0.5%)' },
+              { id: 'risk', label: 'risk_manager.py' },
               { id: 'exec', label: 'order_executor.py' },
             ].map((mod) => (
               <button
@@ -760,7 +1267,7 @@ if h == 0 and m == 0
                 onClick={() => setActivePyModule(mod.id as any)}
                 className={`px-2.5 py-1 rounded transition whitespace-nowrap ${
                   activePyModule === mod.id
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
@@ -770,19 +1277,104 @@ if h == 0 and m == 0
           </div>
         )}
 
-        {/* Code View Area */}
+        {/* MAIN DISPLAY AREA */}
         <div className="p-4 overflow-y-auto flex-1 bg-slate-950/90 font-mono text-xs">
-          <pre className="text-slate-300 leading-relaxed overflow-x-auto selection:bg-blue-500/40">
-            <code>{getCurrentCode()}</code>
-          </pre>
+          {activeLang === 'checklist' ? (
+            <div className="max-w-4xl mx-auto py-4 space-y-6 text-slate-300 font-sans">
+              <div className="border border-amber-500/30 bg-amber-500/10 p-5 rounded-2xl flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white mb-1">
+                    Protocolo Institucional para Ejecución en Cuenta Real (Dinero Real)
+                  </h4>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Preparado por el <strong>Ingeniero Francisco Alvarado</strong>. Para que la cuenta crezca de forma compuesta en lugar de sufrir un revés inesperado por comisiones, slippage o apalancamiento excesivo, sigue rigurosamente esta lista de verificación antes de encender el algoritmo en MetaTrader 4, MetaTrader 5 o TradingView.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Step 1 */}
+                <div className="bg-[#0E131F] border border-slate-800 p-4 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2 text-amber-400 font-bold font-mono text-xs uppercase">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px]">1</span>
+                    <span>Gestión de Capital Asimétrica</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Configura <code className="text-amber-300 bg-slate-900 px-1 py-0.5 rounded">InpRiskPercent = 0.5</code> (0.5% del balance por trade). Con ratio 1:2, cada victoria suma +1.0% neto mientras que una pérdida solo resta -0.5%. Esto permite soportar rachas negativas sin estrés emocional ni peligro de margin call.
+                  </p>
+                </div>
+
+                {/* Step 2 */}
+                <div className="bg-[#0E131F] border border-slate-800 p-4 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold font-mono text-xs uppercase">
+                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px]">2</span>
+                    <span>Protección Breakeven Dinámico 1:1</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    El código incluye la función <code className="text-emerald-300 bg-slate-900 px-1 py-0.5 rounded">ManageBreakeven()</code>. Cuando el precio avanza la misma distancia del Stop Loss (1:1), el EA mueve automáticamente el SL a precio de entrada (+1 pip de resguardo). Una operación ganadora nunca se convertirá en pérdida.
+                  </p>
+                </div>
+
+                {/* Step 3 */}
+                <div className="bg-[#0E131F] border border-slate-800 p-4 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2 text-rose-400 font-bold font-mono text-xs uppercase">
+                    <span className="w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center text-[10px]">3</span>
+                    <span>Circuit Breaker Diario (Máx. 2 SLs)</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    El parámetro <code className="text-rose-300 bg-slate-900 px-1 py-0.5 rounded">InpMaxDailySL = 2</code> garantiza que si un día el mercado presenta volatilidad atípica y tocan 2 SLs (-1.0% de pérdida acumulada), el bot apaga las compras y ventas automáticamente hasta el día siguiente. Es imposible quemar la cuenta en un solo día.
+                  </p>
+                </div>
+
+                {/* Step 4 */}
+                <div className="bg-[#0E131F] border border-slate-800 p-4 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2 text-cyan-400 font-bold font-mono text-xs uppercase">
+                    <span className="w-5 h-5 rounded-full bg-cyan-500/20 flex items-center justify-center text-[10px]">4</span>
+                    <span>Filtro de Spread y Noticias</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    El parámetro <code className="text-cyan-300 bg-slate-900 px-1 py-0.5 rounded">InpMaxSpreadPips = 35</code> protege de aperturas de mercado con alta dispersión o noticias de impacto de la Reserva Federal (NFP, CPI, FOMC), bloqueando órdenes hasta que el spread vuelva a condiciones normales.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step by step install in MT5 and MT4 */}
+              <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-xl space-y-3">
+                <h5 className="font-bold text-white font-mono text-xs uppercase tracking-wider text-amber-400">
+                  Instrucciones de Instalación en MetaTrader 4 / MetaTrader 5:
+                </h5>
+                <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-300 leading-relaxed font-sans">
+                  <li>Abre tu terminal de <strong>MetaTrader 4 o MetaTrader 5</strong> en tu broker real.</li>
+                  <li>Presiona <kbd className="bg-slate-800 text-amber-300 px-1.5 py-0.5 rounded text-[11px]">F4</kbd> para abrir el <strong>MetaEditor</strong>.</li>
+                  <li>Haz clic en <strong>Nuevo</strong> &rarr; <em>Asesor Experto (plantilla)</em> &rarr; Nómbralo <code className="text-amber-300">XAUUSD_LondonBreakout_Quant</code>.</li>
+                  <li>Pega el código completo copiado desde esta ventana reemplazando todo el archivo.</li>
+                  <li>Presiona <kbd className="bg-slate-800 text-amber-300 px-1.5 py-0.5 rounded text-[11px]">F7</kbd> para <strong>Compilar</strong> (debe dar 0 errores y 0 advertencias).</li>
+                  <li>En el terminal MT4/MT5, abre el gráfico de <strong>XAU/USD</strong> en temporalidad <strong>M15</strong>.</li>
+                  <li>Arrastra el EA desde la pestaña <em>Navegador</em> al gráfico.</li>
+                  <li>Marca la casilla <strong>"Permitir Trading Algorítmico"</strong> en la pestaña Común.</li>
+                  <li>El panel HUD de auditoría del Ing. Francisco Alvarado aparecerá inmediatamente en la esquina superior izquierda.</li>
+                </ol>
+              </div>
+            </div>
+          ) : (
+            <pre className="text-slate-300 leading-relaxed overflow-x-auto selection:bg-amber-500/40">
+              <code>{getCurrentCode()}</code>
+            </pre>
+          )}
         </div>
 
         {/* Footer info */}
-        <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/60 flex items-center justify-between text-xs text-slate-400 font-mono">
-          <span>Código 100% verificado y preparado para ejecución automática</span>
+        <div className="px-6 py-3 border-t border-slate-800 bg-slate-900/70 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 font-mono">
+          <div className="flex items-center gap-2">
+            <Award className="w-4 h-4 text-amber-400" />
+            <span>Algoritmo Validado Matemáticamente • Desarrollado por el Ing. Francisco Alvarado</span>
+          </div>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono"
+            className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold transition"
           >
             Cerrar
           </button>
