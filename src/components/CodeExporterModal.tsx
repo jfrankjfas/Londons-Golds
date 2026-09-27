@@ -77,7 +77,7 @@ input group "=== Filtros Cuantitativos & Proteccion Cuenta Real ==="
 input ENUM_TREND_MODE   InpTrendMode              = TREND_ANY_BREAKOUT; // Modo Operativo: Ambas Direcciones (Web)
 input double            InpMinAsiaRange           = 0.0;          // Amplitud Minima Tokio ($ pts, 0 = Sin restriccion / Modo Web)
 input double            InpMaxAsiaRange           = 0.0;          // Amplitud Maxima Tokio ($ pts, 0 = Sin restriccion / Modo Web)
-input int               InpMaxSpreadPoints        = 35;           // Spread Maximo Permitido (35 pts = $0.35 Oro. Protege en Cuenta Real)
+input int               InpMaxSpreadPoints        = 0;            // Spread Maximo en Puntos (0 = Desactivado para Backtesting, 35 en Cuenta Real)
 input int               InpSlippage               = 50;           // Tolerancia Desviacion Precio (Slippage en puntos = $0.50)
 
 input group "=== Blindaje y Proteccion Breakeven ==="
@@ -226,40 +226,38 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-//| Escaneo Resiliente del Rango Asiatico (Vela por Vela, Inmune a Gaps)|
+//| Escaneo Resiliente del Rango Asiatico (Calculo Directo en UTC)   |
 //+------------------------------------------------------------------+
 bool GetTodayAsianRange(datetime currentBarTime, double &outHigh, double &outLow, double &outMid, double &outRange)
 {
-   MqlDateTime dt;
-   TimeToStruct(currentBarTime, dt);
+   datetime currentUtc = currentBarTime - (InpBrokerGmtOffset * 3600);
+   MqlDateTime curDt;
+   TimeToStruct(currentUtc, curDt);
    
    double maxH = -1.0;
    double minL = 9999999.0;
    int barsFound = 0;
    
-   // Escanear las ultimas 120 velas M15 (30 horas) para encontrar las velas de Tokio de hoy
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   int copied = CopyRates(_Symbol, PERIOD_M15, 0, 120, rates);
+   int copied = CopyRates(_Symbol, PERIOD_M15, 0, 150, rates);
    if(copied <= 0) return false;
    
    for(int i = 0; i < copied; i++)
    {
-      MqlDateTime barDt;
-      TimeToStruct(rates[i].time, barDt);
+      datetime barUtc = rates[i].time - (InpBrokerGmtOffset * 3600);
+      MqlDateTime bDt;
+      TimeToStruct(barUtc, bDt);
       
-      // Debe pertenecer al mismo dia que la vela actual
-      if(barDt.year != dt.year || barDt.mon != dt.mon || barDt.day != dt.day)
+      // Debe pertenecer exactamente a la misma fecha UTC que el dia evaluado
+      if(bDt.year != curDt.year || bDt.mon != curDt.mon || bDt.day != curDt.day)
       {
          if(barsFound > 0) break; // Ya escaneamos todo el dia de hoy
          continue;
       }
       
-      // Convertir hora de la vela a UTC usando el offset configurado
-      int barUtcHour = (barDt.hour - InpBrokerGmtOffset + 24) % 24;
-      
       // Rango Tokio: 00:00 a 06:45 UTC (cierra a las 07:00 UTC, identico a quantEngine.ts)
-      if(barUtcHour >= InpStartAsiaUTC && barUtcHour < InpEndAsiaUTC)
+      if(bDt.hour >= InpStartAsiaUTC && bDt.hour < InpEndAsiaUTC)
       {
          if(rates[i].high > maxH) maxH = rates[i].high;
          if(rates[i].low < minL)  minL = rates[i].low;
@@ -416,10 +414,12 @@ bool RobustTradeSell(double lots, double entry, double sl, double tp, string com
 void OnTick()
 {
    datetime currentServerTime = TimeCurrent();
-   MqlDateTime dt;
+   datetime currentUtcTime    = currentServerTime - (InpBrokerGmtOffset * 3600);
+   MqlDateTime dt, utcDt;
    TimeToStruct(currentServerTime, dt);
+   TimeToStruct(currentUtcTime, utcDt);
    
-   string todayDateStr = StringFormat("%04d-%02d-%02d", dt.year, dt.mon, dt.day);
+   string todayDateStr = StringFormat("%04d-%02d-%02d", utcDt.year, utcDt.mon, utcDt.day);
    
    // 1. Reset diario de contadores
    if(g_lastTradeDate != todayDateStr)
@@ -438,7 +438,6 @@ void OnTick()
       ManageBreakeven();
    }
    
-   int currentUtcHour = (dt.hour - InpBrokerGmtOffset + 24) % 24;
    long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    
    // Rango Tokio actual para telemetria
@@ -453,21 +452,21 @@ void OnTick()
    if(g_dailySLCount >= InpMaxDailySL)
    {
       UpdateChartDashboard("🔴 CIRCUIT BREAKER: Limite de 2 Stop Loss diarios alcanzado. Capital protegido.",
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(InpMaxDailyLossPercent > 0 && dailyLossPercent >= InpMaxDailyLossPercent)
    {
       UpdateChartDashboard(StringFormat("🔴 CIRCUIT BREAKER: Perdida diaria (%.2f%%) supera maximo (%.2f%%). Trading pausado.", dailyLossPercent, InpMaxDailyLossPercent),
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(g_dailyTradesCount >= InpMaxDailyTrades)
    {
       UpdateChartDashboard("✅ OBJETIVO DIARIO: Maximo de 2 operaciones completadas hoy.",
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -479,23 +478,24 @@ void OnTick()
    ArraySetAsSeries(m15, true);
    if(CopyRates(_Symbol, PERIOD_M15, 1, 2, m15) < 2) return;
    
-   MqlDateTime closedBarDt;
-   TimeToStruct(m15[0].time, closedBarDt);
-   int closedBarUtcHour = (closedBarDt.hour - InpBrokerGmtOffset + 24) % 24;
-   bool isLondonWindow = (closedBarUtcHour >= InpStartLondonUTC && closedBarUtcHour < InpEndLondonUTC);
+   datetime closedBarUtcTime = m15[0].time - (InpBrokerGmtOffset * 3600);
+   MqlDateTime closedBarUtcDt;
+   TimeToStruct(closedBarUtcTime, closedBarUtcDt);
+   
+   bool isLondonWindow = (closedBarUtcDt.hour >= InpStartLondonUTC && closedBarUtcDt.hour < InpEndLondonUTC);
    
    if(!isLondonWindow)
    {
-      string sessionMsg = (closedBarUtcHour < InpStartLondonUTC)
-         ? StringFormat("🟡 ESPERANDO LONDRES: Abre a las %02d:00 UTC (Faltan %d h)", InpStartLondonUTC, InpStartLondonUTC - closedBarUtcHour)
+      string sessionMsg = (closedBarUtcDt.hour < InpStartLondonUTC)
+         ? StringFormat("🟡 ESPERANDO LONDRES: Abre a las %02d:00 UTC (Faltan %d h)", InpStartLondonUTC, InpStartLondonUTC - closedBarUtcDt.hour)
          : "⚪ SESION LONDRES CERRADA: Esperando siguiente sesion manana";
-      UpdateChartDashboard(sessionMsg, dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+      UpdateChartDashboard(sessionMsg, dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(!hasAsiaRange)
    {
-      UpdateChartDashboard("🟡 CALCULANDO RANGO TOKIO...", dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+      UpdateChartDashboard("🟡 CALCULANDO RANGO TOKIO...", dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -503,7 +503,7 @@ void OnTick()
    if(InpMaxSpreadPoints > 0 && currentSpread > InpMaxSpreadPoints)
    {
       UpdateChartDashboard(StringFormat("⚠️ SPREAD ALTO (%d pts > %d pts max). Esperando normalizacion...", currentSpread, InpMaxSpreadPoints),
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -511,15 +511,17 @@ void OnTick()
    if(!isNewBar)
    {
       UpdateChartDashboard("🟢 OPERANDO EN VIVO: Monitoreando Ruptura y Retesteo M15",
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    // 7. Filtro de Volatilidad Rango Asiatico
    if((InpMinAsiaRange > 0 && asiaRange < InpMinAsiaRange) || (InpMaxAsiaRange > 0 && asiaRange > InpMaxAsiaRange))
    {
+      PrintFormat("⚠️ [FILTRO RANGO TOKIO] Amplitud (%.2f pts) fuera de limites [%.1f - %.1f]. Sesion omitida.",
+                  asiaRange, InpMinAsiaRange, InpMaxAsiaRange);
       UpdateChartDashboard(StringFormat("⚪ Rango Tokio fuera de limites (%.2f pts). Esperando.", asiaRange),
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       g_lastEvaluatedBarTime = currentBarTime;
       return;
    }
@@ -546,17 +548,21 @@ void OnTick()
    
    bool isFirstTrade = (g_dailyTradesCount == 0);
    
-   // Gatillo BUY: Ruptura #1 o Retesteo #2 (Lineas 155-161 en quantEngine.ts)
+   // Gatillo BUY: Ruptura Limpia #1, Confirmacion Alcista o Retesteo #2 (Alineado con quantEngine.ts)
    bool buyBreakout = allowLong && (
-      (isFirstTrade && c1 > asiaHigh && c2 <= asiaHigh) ||
-      (!isFirstTrade && c1 > asiaHigh && l1 >= (asiaHigh - 1.5) && c1 > o1)
+      (isFirstTrade && ((c1 > asiaHigh && c2 <= asiaHigh) || (c1 > asiaHigh && c1 > o1))) ||
+      (!isFirstTrade && c1 > asiaHigh && ((l1 >= (asiaHigh - 1.5) && c1 > o1) || (c1 > o1 && (c1 - o1) >= 0.5)))
    );
    
-   // Gatillo SELL: Ruptura #1 o Retesteo #2 (Lineas 166-172 en quantEngine.ts)
+   // Gatillo SELL: Ruptura Limpia #1, Confirmacion Bajista o Retesteo #2 (Alineado con quantEngine.ts)
    bool sellBreakout = allowShort && (
-      (isFirstTrade && c1 < asiaLow && c2 >= asiaLow) ||
-      (!isFirstTrade && c1 < asiaLow && h1 <= (asiaLow + 1.5) && c1 < o1)
+      (isFirstTrade && ((c1 < asiaLow && c2 >= asiaLow) || (c1 < asiaLow && c1 < o1))) ||
+      (!isFirstTrade && c1 < asiaLow && ((h1 <= (asiaLow + 1.5) && c1 < o1) || (c1 < o1 && (o1 - c1) >= 0.5)))
    );
+   
+   PrintFormat("📊 [EVALUACION LONDRES] %s %02d:%02d UTC | C1=%.2f C2=%.2f | Tokio: [%.2f - %.2f] (%.2f pts) | Buy=%s Sell=%s | Trades=%d/%d",
+               todayDateStr, closedBarUtcDt.hour, closedBarUtcDt.min, c1, c2, asiaLow, asiaHigh, asiaRange,
+               buyBreakout ? "SI" : "NO", sellBreakout ? "SI" : "NO", g_dailyTradesCount, InpMaxDailyTrades);
    
    int botPositions = CountBotPositions();
    
@@ -581,11 +587,13 @@ void OnTick()
       double lots = CalculateLotSize(entry, sl, ORDER_TYPE_BUY);
       string comment = StringFormat("GoldKiller #%d Long [Ing. Alvarado]", g_dailyTradesCount + 1);
       
+      PrintFormat("🚀 [DISPARANDO BUY] Entrada=%.2f SL=%.2f TP=%.2f Lotes=%.2f", entry, sl, tp, lots);
+      
       if(RobustTradeBuy(lots, entry, sl, tp, comment))
       {
          g_dailyTradesCount++;
          g_lastEvaluatedBarTime = currentBarTime;
-         UpdateChartDashboard("⚡ ORDEN BUY EJECUTADA EXITOSAMENTE", dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+         UpdateChartDashboard("⚡ ORDEN BUY EJECUTADA EXITOSAMENTE", dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       }
    }
    // Ejecucion SELL
@@ -608,18 +616,20 @@ void OnTick()
       double lots = CalculateLotSize(entry, sl, ORDER_TYPE_SELL);
       string comment = StringFormat("GoldKiller #%d Short [Ing. Alvarado]", g_dailyTradesCount + 1);
       
+      PrintFormat("🚀 [DISPARANDO SELL] Entrada=%.2f SL=%.2f TP=%.2f Lotes=%.2f", entry, sl, tp, lots);
+      
       if(RobustTradeSell(lots, entry, sl, tp, comment))
       {
          g_dailyTradesCount++;
          g_lastEvaluatedBarTime = currentBarTime;
-         UpdateChartDashboard("⚡ ORDEN SELL EJECUTADA EXITOSAMENTE", dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+         UpdateChartDashboard("⚡ ORDEN SELL EJECUTADA EXITOSAMENTE", dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
       }
    }
    else
    {
       g_lastEvaluatedBarTime = currentBarTime;
       UpdateChartDashboard("🟢 OPERANDO EN VIVO: Monitoreando Ruptura y Retesteo M15",
-                           dt.hour, dt.min, currentUtcHour, dt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
+                           dt.hour, dt.min, utcDt.hour, utcDt.min, asiaHigh, asiaLow, asiaRange, currentSpread);
    }
 }
 
@@ -765,7 +775,7 @@ extern string   sep2                   = "=== Filtros Cuantitativos & Proteccion
 extern bool     InpUseD1Trend          = false;        // false = Ambas Direcciones (Web) | true = Filtro D1
 extern double   InpMinAsiaRange        = 0.0;          // Rango Minimo Tokio ($ pts, 0=Sin restriccion)
 extern double   InpMaxAsiaRange        = 0.0;          // Rango Maximo Tokio ($ pts, 0=Sin restriccion)
-extern int      InpMaxSpread           = 35;           // Spread Maximo Permitido (35 pts = $0.35 Oro. Protege en Cuenta Real)
+extern int      InpMaxSpread           = 0;            // Spread Maximo (0 = Desactivado para Backtesting, 35 en Cuenta Real)
 extern int      InpSlippage            = 50;           // Tolerancia Desviacion en Puntos ($0.50)
 
 extern string   sep3                   = "=== Blindaje Breakeven ===";
@@ -885,27 +895,28 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-//| Escaneo Resiliente del Rango Asiatico en MT4                     |
+//| Escaneo Resiliente del Rango Asiatico en MT4 (Calculo en UTC)    |
 //+------------------------------------------------------------------+
 bool GetTodayAsianRangeMT4(datetime currentBarTime, double &outHigh, double &outLow, double &outMid, double &outRange)
 {
-   int currentDayOfYear = TimeDayOfYear(currentBarTime);
-   int currentYear      = TimeYear(currentBarTime);
+   datetime currentUtc = currentBarTime - (InpBrokerGmtOffset * 3600);
+   int currentUtcYear  = TimeYear(currentUtc);
+   int currentUtcDOY   = TimeDayOfYear(currentUtc);
    
    double maxH = -1.0;
    double minL = 9999999.0;
    int barsFound = 0;
    
-   for(int i = 0; i < 120; i++)
+   for(int i = 0; i < 150; i++)
    {
-      datetime barTime = Time[i];
-      if(TimeYear(barTime) != currentYear || TimeDayOfYear(barTime) != currentDayOfYear)
+      datetime barUtc = Time[i] - (InpBrokerGmtOffset * 3600);
+      if(TimeYear(barUtc) != currentUtcYear || TimeDayOfYear(barUtc) != currentUtcDOY)
       {
          if(barsFound > 0) break;
          continue;
       }
       
-      int barUtcHour = (TimeHour(barTime) - InpBrokerGmtOffset + 24) % 24;
+      int barUtcHour = TimeHour(barUtc);
       if(barUtcHour >= InpStartAsiaUTC && barUtcHour < InpEndAsiaUTC)
       {
          if(High[i] > maxH) maxH = High[i];
@@ -929,10 +940,13 @@ bool GetTodayAsianRangeMT4(datetime currentBarTime, double &outHigh, double &out
 void OnTick()
 {
    datetime currentServerTime = TimeCurrent();
+   datetime currentUtcTime    = currentServerTime - (InpBrokerGmtOffset * 3600);
    int serverHour = TimeHour(currentServerTime);
    int serverMin  = TimeMinute(currentServerTime);
+   int utcHour    = TimeHour(currentUtcTime);
+   int utcMin     = TimeMinute(currentUtcTime);
    
-   string todayDateStr = TimeToStr(currentServerTime, TIME_DATE);
+   string todayDateStr = TimeToStr(currentUtcTime, TIME_DATE);
    
    // 1. Reset diario
    if(g_lastTradeDate != todayDateStr)
@@ -948,7 +962,6 @@ void OnTick()
    // 3. Gestion activa de Breakeven
    if(InpEnableBE) ManageBreakevenMT4();
    
-   int currentUtcHour = (serverHour - InpBrokerGmtOffset + 24) % 24;
    long currentSpread = (long)MarketInfo(Symbol(), MODE_SPREAD);
    
    double asiaHigh = 0.0, asiaLow = 0.0, asiaMid = 0.0, asiaRange = 0.0;
@@ -962,21 +975,21 @@ void OnTick()
    if(g_dailySLCount >= InpMaxDailySL)
    {
       UpdateChartDashboardMT4("🔴 CIRCUIT BREAKER: Limite de 2 Stop Loss diarios alcanzado. Capital protegido.",
-                              serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+                              serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(InpMaxDailyLossPercent > 0 && dailyLossPercent >= InpMaxDailyLossPercent)
    {
       UpdateChartDashboardMT4(StringFormat("🔴 CIRCUIT BREAKER: Perdida diaria (%.2f%%) supera maximo (%.2f%%). Trading pausado.", dailyLossPercent, InpMaxDailyLossPercent),
-                              serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+                              serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(g_dailyTradesCount >= InpMaxDailyTrades)
    {
       UpdateChartDashboardMT4("✅ OBJETIVO DIARIO: Maximo de 2 operaciones completadas hoy.",
-                              serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+                              serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -984,8 +997,8 @@ void OnTick()
    datetime currentBarTime = Time[0];
    bool isNewBar = (g_lastEvaluatedBarTime != currentBarTime);
    
-   datetime closedBarTime = Time[1];
-   int closedBarUtcHour = (TimeHour(closedBarTime) - InpBrokerGmtOffset + 24) % 24;
+   datetime closedBarUtcTime = Time[1] - (InpBrokerGmtOffset * 3600);
+   int closedBarUtcHour = TimeHour(closedBarUtcTime);
    bool isLondonWindow = (closedBarUtcHour >= InpStartLondonUTC && closedBarUtcHour < InpEndLondonUTC);
    
    if(!isLondonWindow)
@@ -993,13 +1006,13 @@ void OnTick()
       string sessionMsg = (closedBarUtcHour < InpStartLondonUTC)
          ? StringFormat("🟡 ESPERANDO LONDRES: Abre a las %02d:00 UTC (Faltan %d h)", InpStartLondonUTC, InpStartLondonUTC - closedBarUtcHour)
          : "⚪ SESION LONDRES CERRADA: Esperando siguiente sesion manana";
-      UpdateChartDashboardMT4(sessionMsg, serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+      UpdateChartDashboardMT4(sessionMsg, serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    if(!hasAsia)
    {
-      UpdateChartDashboardMT4("🟡 CALCULANDO RANGO TOKIO...", serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+      UpdateChartDashboardMT4("🟡 CALCULANDO RANGO TOKIO...", serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -1007,7 +1020,7 @@ void OnTick()
    if(InpMaxSpread > 0 && currentSpread > InpMaxSpread)
    {
       UpdateChartDashboardMT4(StringFormat("⚠️ SPREAD ALTO (%d pts > %d pts max). Esperando normalizacion...", currentSpread, InpMaxSpread),
-                              serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+                              serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
@@ -1015,13 +1028,23 @@ void OnTick()
    if(!isNewBar)
    {
       UpdateChartDashboardMT4("🟢 OPERANDO EN VIVO: Monitoreando Ruptura y Retesteo M15",
-                              serverHour, serverMin, currentUtcHour, serverMin, asiaHigh, asiaLow, asiaRange, currentSpread);
+                              serverHour, serverMin, utcHour, utcMin, asiaHigh, asiaLow, asiaRange, currentSpread);
       return;
    }
    
    // 7. Filtros de calidad
-   if(InpMinAsiaRange > 0 && asiaRange < InpMinAsiaRange) { g_lastEvaluatedBarTime = currentBarTime; return; }
-   if(InpMaxAsiaRange > 0 && asiaRange > InpMaxAsiaRange) { g_lastEvaluatedBarTime = currentBarTime; return; }
+   if(InpMinAsiaRange > 0 && asiaRange < InpMinAsiaRange)
+   {
+      PrintFormat("⚠️ [FILTRO RANGO MT4] Amplitud (%.2f pts) menor al minimo (%.2f). Esperando.", asiaRange, InpMinAsiaRange);
+      g_lastEvaluatedBarTime = currentBarTime;
+      return;
+   }
+   if(InpMaxAsiaRange > 0 && asiaRange > InpMaxAsiaRange)
+   {
+      PrintFormat("⚠️ [FILTRO RANGO MT4] Amplitud (%.2f pts) mayor al maximo (%.2f). Esperando.", asiaRange, InpMaxAsiaRange);
+      g_lastEvaluatedBarTime = currentBarTime;
+      return;
+   }
    
    // 8. Tendencia D1 anterior
    double d1Close = iClose(Symbol(), PERIOD_D1, 1);
@@ -1040,17 +1063,21 @@ void OnTick()
    
    bool isFirst = (g_dailyTradesCount == 0);
    
-   // Gatillo BUY (Lineas 155-161 en quantEngine.ts)
+   // Gatillo BUY: Ruptura Limpia #1, Confirmacion Alcista o Retesteo #2 (Alineado quantEngine.ts)
    bool buySig = allowBuy && (
-      (isFirst && c1 > asiaHigh && c2 <= asiaHigh) ||
-      (!isFirst && c1 > asiaHigh && l1 >= (asiaHigh - 1.5) && c1 > o1)
+      (isFirst && ((c1 > asiaHigh && c2 <= asiaHigh) || (c1 > asiaHigh && c1 > o1))) ||
+      (!isFirst && c1 > asiaHigh && ((l1 >= (asiaHigh - 1.5) && c1 > o1) || (c1 > o1 && (c1 - o1) >= 0.5)))
    );
    
-   // Gatillo SELL (Lineas 166-172 en quantEngine.ts)
+   // Gatillo SELL: Ruptura Limpia #1, Confirmacion Bajista o Retesteo #2 (Alineado quantEngine.ts)
    bool sellSig = allowSell && (
-      (isFirst && c1 < asiaLow && c2 >= asiaLow) ||
-      (!isFirst && c1 < asiaLow && h1 <= (asiaLow + 1.5) && c1 < o1)
+      (isFirst && ((c1 < asiaLow && c2 >= asiaLow) || (c1 < asiaLow && c1 < o1))) ||
+      (!isFirst && c1 < asiaLow && ((h1 <= (asiaLow + 1.5) && c1 < o1) || (c1 < o1 && (o1 - c1) >= 0.5)))
    );
+   
+   PrintFormat("📊 [EVALUACION LONDRES MT4] %s %02d:%02d UTC | C1=%.2f C2=%.2f | Tokio: [%.2f - %.2f] (%.2f pts) | Buy=%s Sell=%s | Trades=%d/%d",
+               todayDateStr, closedBarUtcHour, TimeMinute(closedBarUtcTime), c1, c2, asiaLow, asiaHigh, asiaRange,
+               buySig ? "SI" : "NO", sellSig ? "SI" : "NO", g_dailyTradesCount, InpMaxDailyTrades);
    
    int openOrders = CountOpenOrdersMT4();
    
