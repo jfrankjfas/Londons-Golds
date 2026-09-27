@@ -28,7 +28,7 @@ export const CodeExporterModal: React.FC<CodeExporterModalProps> = ({ isOpen, on
   if (!isOpen) return null;
 
   // =========================================================================
-  // METATRADER 5 (MQL5) - PRODUCTION READY FOR REAL ACCOUNT
+  // METATRADER 5 (MQL5) - PRODUCTION READY FOR REAL ACCOUNT & BACKTESTER
   // =========================================================================
   const mql5Code = `//+------------------------------------------------------------------+
 //|                                     XAUUSD_LondonBreakout_Quant.mq5 |
@@ -38,8 +38,8 @@ export const CodeExporterModal: React.FC<CodeExporterModalProps> = ({ isOpen, on
 //+------------------------------------------------------------------+
 #property copyright "Ingeniero Francisco Alvarado - Cuantitativo XAU/USD"
 #property link      "https://github.com/francisco-alvarado-quant"
-#property version   "2.50"
-#property description "EA Cuantitativo optimizado para XAU/USD (Oro). Ejecuta Ruptura de Sesion Tokio en Londres con Filtro D1, Proteccion Breakeven 1:1, Control de Spread y Circuito de Blindaje Diario."
+#property version   "3.00"
+#property description "EA Cuantitativo optimizado para XAU/USD (Oro). Totalmente compatible con el Probador de Estrategias y Cuentas Reales. Incluye sincronizacion GMT de broker, Ruptura y Retesteo, Breakeven 1:1 y Circuit Breaker diario."
 #property strict
 
 #include <Trade\\Trade.mqh>
@@ -60,32 +60,43 @@ input double            InpRRRatio           = 2.0;          // Ratio Riesgo / B
 input int               InpMaxDailySL        = 2;            // Limite Diario de Perdidas (Circuit Breaker)
 input int               InpMaxDailyTrades    = 2;            // Maximo de Operaciones Diarias (1 o 2)
 
-input group "=== Horarios de Sesion (Hora UTC) ==="
-input int               InpStartAsia         = 0;            // Inicio Rango Asiatico (Hora UTC)
-input int               InpEndAsia           = 6;            // Fin Rango Asiatico (Hora UTC)
-input int               InpStartLondon       = 8;            // Inicio Ventana Londres (Hora UTC)
-input int               InpEndLondon         = 13;           // Fin Ventana Londres (Hora UTC)
+input group "=== Sincronizacion Horaria (Broker vs UTC) ==="
+input int               InpBrokerGmtOffset   = 3;            // Desplazamiento Horario Broker (GMT+3 en verano, GMT+2 en invierno)
+input int               InpStartAsiaUTC      = 0;            // Inicio Rango Asiatico (Hora UTC)
+input int               InpEndAsiaUTC        = 6;            // Fin Rango Asiatico (Hora UTC)
+input int               InpStartLondonUTC    = 8;            // Inicio Ventana Londres (Hora UTC)
+input int               InpEndLondonUTC      = 13;           // Fin Ventana Londres (Hora UTC)
 
 input group "=== Filtros Cuantitativos de Calidad ==="
 input ENUM_TREND_MODE   InpTrendMode         = TREND_ANY_BREAKOUT; // Modo de Operacion
 input double            InpMinAsiaRange      = 6.0;          // Amplitud Minima Rango Tokio (Puntos Oro $)
 input double            InpMaxAsiaRange      = 22.0;         // Amplitud Maxima Rango Tokio (Puntos Oro $)
-input int               InpMaxSpreadPips     = 35;           // Spread Maximo Permitido (Puntos / Centavos)
-input int               InpSlippage          = 20;           // Tolerancia Desviacion Precio (Slippage)
+input int               InpMaxSpreadPips     = 50;           // Spread Maximo Permitido (Puntos / Centavos)
+input int               InpSlippage          = 30;           // Tolerancia Desviacion Precio (Slippage)
 
 input group "=== Blindaje y Proteccion Breakeven ==="
 input bool              InpEnableBreakeven   = true;         // Activar Breakeven Dinamico a 1:1 R
-input double            InpBEBufferPips      = 1.0;          // Buffer por encima de entrada (+10 pts)
+input double            InpBEBufferPoints    = 0.20;         // Buffer por encima de entrada ($0.20 Oro)
 
 //--- Variables Globales de Estado
-double   g_asiaHigh          = 0.0;
-double   g_asiaLow           = 0.0;
-double   g_asiaMid           = 0.0;
-double   g_asiaRange         = 0.0;
-int      g_lastTradeDay      = -1;
-int      g_dailyTradesCount  = 0;
-int      g_dailySLCount      = 0;
-datetime g_lastBarTime       = 0;
+datetime g_lastEvaluatedBarTime = 0;
+string   g_lastTradeDate        = "";
+int      g_dailyTradesCount     = 0;
+int      g_dailySLCount         = 0;
+
+//+------------------------------------------------------------------+
+//| Auto-detectar Politica de Llenado compatible con el Broker       |
+//+------------------------------------------------------------------+
+void SetOptimalFillingMode()
+{
+   uint filling = (uint)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((filling & SYMBOL_FILLING_IOC) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else
+      trade.SetTypeFilling(ORDER_FILLING_RETURN);
+}
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -94,11 +105,13 @@ int OnInit()
 {
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetDeviationInPoints(InpSlippage);
-   trade.SetTypeFilling(ORDER_FILLING_IOC);
+   trade.SetAsyncMode(false);
+   SetOptimalFillingMode();
    
    Print("===============================================================");
-   Print(" EA INICIADO: XAU/USD London Breakout Cuantitativo");
+   Print(" EA INICIADO: XAU/USD London Breakout Cuantitativo v3.0");
    Print(" Desarrollado por: Ingeniero Francisco Alvarado");
+   Print(" Broker GMT Offset configurado: GMT+", InpBrokerGmtOffset);
    Print(" Riesgo por Operacion: ", InpRiskPercent, "% | R:R: 1:", InpRRRatio);
    Print("===============================================================");
    return(INIT_SUCCEEDED);
@@ -113,163 +126,229 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
+//| Calcula el Rango Asiatico exacto del dia escaneando las velas M15|
+//+------------------------------------------------------------------+
+bool GetTodayAsianRange(datetime currentBarTime, double &outHigh, double &outLow, double &outMid, double &outRange)
+{
+   MqlDateTime dt;
+   TimeToStruct(currentBarTime, dt);
+   
+   // Medianoche del dia actual en horario del broker
+   MqlDateTime midnightDt = dt;
+   midnightDt.hour = 0;
+   midnightDt.min  = 0;
+   midnightDt.sec  = 0;
+   datetime midnight = StructToTime(midnightDt);
+   
+   // Horas de inicio y fin en horario del servidor del broker
+   int startServerHour = InpStartAsiaUTC + InpBrokerGmtOffset;
+   int endServerHour   = InpEndAsiaUTC + InpBrokerGmtOffset;
+   
+   datetime startAsiaTime = midnight + (startServerHour * 3600);
+   datetime endAsiaTime   = midnight + (endServerHour * 3600);
+   
+   MqlRates rates[];
+   int count = CopyRates(_Symbol, PERIOD_M15, startAsiaTime, endAsiaTime, rates);
+   if(count <= 0) return false;
+   
+   double maxH = -1.0;
+   double minL = 9999999.0;
+   for(int i = 0; i < count; i++)
+   {
+      if(rates[i].high > maxH) maxH = rates[i].high;
+      if(rates[i].low < minL)  minL = rates[i].low;
+   }
+   
+   if(maxH <= 0 || minL >= 9999999.0 || maxH <= minL) return false;
+   
+   outHigh  = NormalizeDouble(maxH, _Digits);
+   outLow   = NormalizeDouble(minL, _Digits);
+   outMid   = NormalizeDouble((outHigh + outLow) / 2.0, _Digits);
+   outRange = NormalizeDouble(outHigh - outLow, _Digits);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Cuenta posiciones abiertas con el MagicNumber del bot            |
+//+------------------------------------------------------------------+
+int CountBotPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(PositionGetTicket(i) > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+            count++;
+      }
+   }
+   return count;
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   datetime currentServerTime = TimeCurrent();
    MqlDateTime dt;
-   TimeGMT(dt); // Reloj sincronizado con UTC
+   TimeToStruct(currentServerTime, dt);
    
-   // 1. Reset diario a medianoche UTC
-   if(dt.hour == 0 && dt.min == 0 && dt.sec < 10 && g_lastTradeDay != dt.day)
+   string todayDateStr = StringFormat("%04d-%02d-%02d", dt.year, dt.mon, dt.day);
+   
+   // 1. Reset diario
+   if(g_lastTradeDate != todayDateStr)
    {
-      g_asiaHigh = 0.0;
-      g_asiaLow  = 0.0;
+      g_lastTradeDate = todayDateStr;
       g_dailyTradesCount = 0;
       g_dailySLCount = 0;
    }
    
-   // 2. Gestion Dinamica de Breakeven en tiempo real
+   // 2. Gestion de Breakeven en tiempo real
    if(InpEnableBreakeven)
    {
       ManageBreakeven();
    }
    
-   // 3. Captura del Rango Asiatico (00:00 a 06:00 UTC)
-   if(dt.hour >= InpStartAsia && dt.hour < InpEndAsia)
+   // 3. Conversion de hora del servidor a hora UTC
+   int currentUtcHour = (dt.hour - InpBrokerGmtOffset + 24) % 24;
+   
+   // Solo evaluar cuando cierra una vela M15
+   datetime currentBarTime = iTime(_Symbol, PERIOD_M15, 0);
+   if(g_lastEvaluatedBarTime == currentBarTime) return;
+   
+   // 4. Ventana Operativa de Londres (08:00 a 13:00 UTC)
+   bool isLondonWindow = (currentUtcHour >= InpStartLondonUTC && currentUtcHour < InpEndLondonUTC);
+   
+   if(!isLondonWindow)
    {
-      MqlRates currentM15[];
-      ArraySetAsSeries(currentM15, true);
-      if(CopyRates(_Symbol, PERIOD_M15, 0, 1, currentM15) > 0)
-      {
-         if(g_asiaHigh == 0.0 || currentM15[0].high > g_asiaHigh) g_asiaHigh = currentM15[0].high;
-         if(g_asiaLow == 0.0  || currentM15[0].low < g_asiaLow)   g_asiaLow  = currentM15[0].low;
-         g_asiaRange = g_asiaHigh - g_asiaLow;
-         g_asiaMid   = (g_asiaHigh + g_asiaLow) / 2.0;
-      }
-      UpdateDashboard(dt, "Acumulacion Tokio (00:00-06:00 UTC)");
+      Comment(StringFormat("\\n[XAU/USD London Breakout - Ing. Francisco Alvarado]\\nHora Broker: %02d:%02d | Hora UTC: %02d:%02d\\nEstado: Esperando apertura de Londres (08:00 UTC)", dt.hour, dt.min, currentUtcHour, dt.min));
       return;
    }
    
-   // 4. Verificacion de limites de seguridad (Circuito de Proteccion)
+   // 5. Circuito de Proteccion de Cuenta Real
    if(g_dailySLCount >= InpMaxDailySL)
    {
-      UpdateDashboard(dt, "ALERTA: Maximo de 2 Stop Loss alcanzado hoy. Trading pausado.");
+      Comment("\\n[XAU/USD Bot - Ing. Francisco Alvarado]\\n⚠️ Limite diario de 2 Stop Loss alcanzado hoy. Trading pausado.");
       return;
    }
    if(g_dailyTradesCount >= InpMaxDailyTrades)
    {
-      UpdateDashboard(dt, "Completado: Maximo de 2 operaciones alcanzado hoy.");
+      Comment("\\n[XAU/USD Bot - Ing. Francisco Alvarado]\\n✅ Limite diario de 2 operaciones completado hoy.");
       return;
    }
    
-   // 5. Ventana Operativa de Londres (08:00 a 13:00 UTC)
-   if(dt.hour >= InpStartLondon && dt.hour < InpEndLondon)
+   // 6. Obtener Rango Asiatico
+   double asiaHigh = 0.0, asiaLow = 0.0, asiaMid = 0.0, asiaRange = 0.0;
+   if(!GetTodayAsianRange(currentBarTime, asiaHigh, asiaLow, asiaMid, asiaRange))
    {
-      UpdateDashboard(dt, "Sesion Londres ACTIVA: Buscando Gatillos de Ruptura / Retesteo");
+      Comment("\\n[XAU/USD Bot - Ing. Francisco Alvarado]\\nCalculando Rango de Tokio...");
+      return;
+   }
+   
+   // 7. Filtro de Volatilidad (6.0 a 22.0 puntos)
+   if(asiaRange < InpMinAsiaRange || asiaRange > InpMaxAsiaRange)
+   {
+      Comment(StringFormat("\\n[XAU/USD Bot - Ing. Francisco Alvarado]\\nFiltro Volatilidad: Rango Tokio anomalo (%.2f pts). Esperando.", asiaRange));
+      return;
+   }
+   
+   // 8. Filtro de Spread
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(spread > InpMaxSpreadPips)
+   {
+      Print("⚠️ Spread elevado: ", spread, " pts. Entrada bloqueada por seguridad.");
+      return;
+   }
+   
+   // 9. Analisis de velas M15 cerradas
+   MqlRates m15[];
+   ArraySetAsSeries(m15, true);
+   if(CopyRates(_Symbol, PERIOD_M15, 1, 2, m15) < 2) return;
+   
+   // 10. Filtro Tendencial D1
+   MqlRates d1[];
+   ArraySetAsSeries(d1, true);
+   if(CopyRates(_Symbol, PERIOD_D1, 1, 1, d1) < 1) return;
+   
+   bool isD1Bullish = (d1[0].close > d1[0].open);
+   bool isD1Bearish = (d1[0].close < d1[0].open);
+   
+   bool allowLong  = (InpTrendMode == TREND_ANY_BREAKOUT) || (isD1Bullish);
+   bool allowShort = (InpTrendMode == TREND_ANY_BREAKOUT) || (isD1Bearish);
+   
+   double c1 = m15[0].close; // Vela M15 recien cerrada
+   double c2 = m15[1].close; // Vela M15 anterior
+   double l1 = m15[0].low;
+   double h1 = m15[0].high;
+   double o1 = m15[0].open;
+   
+   bool isFirstTrade = (g_dailyTradesCount == 0);
+   
+   // Condicion BUY: Ruptura #1 o Retesteo #2
+   bool buyBreakout = allowLong && (
+      (isFirstTrade && c1 > asiaHigh && c2 <= asiaHigh) ||
+      (!isFirstTrade && c1 > asiaHigh && l1 >= (asiaHigh - 1.5) && c1 > o1)
+   );
+   
+   // Condicion SELL: Ruptura #1 o Retesteo #2
+   bool sellBreakout = allowShort && (
+      (isFirstTrade && c1 < asiaLow && c2 >= asiaLow) ||
+      (!isFirstTrade && c1 < asiaLow && h1 <= (asiaLow + 1.5) && c1 < o1)
+   );
+   
+   int botPositions = CountBotPositions();
+   
+   // Ejecucion BUY
+   if(buyBreakout && botPositions == 0)
+   {
+      double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double sl = isFirstTrade ? asiaMid : (entry - MathMin(MathMax(asiaRange * 0.5, 4.0), 8.0));
+      sl = NormalizeDouble(sl, _Digits);
+      double riskDistance = entry - sl;
+      double tp = NormalizeDouble(entry + (riskDistance * InpRRRatio), _Digits);
       
-      // Control de vela nueva M15 (evita disparos falsos intra-vela)
-      datetime currentBar = iTime(_Symbol, PERIOD_M15, 0);
-      if(g_lastBarTime == currentBar) return;
+      double lots = CalculateLotSize(entry, sl);
+      string comment = StringFormat("LB #%d Long [Ing. Alvarado]", g_dailyTradesCount + 1);
       
-      // Filtro de Volatilidad: Asegura que Tokio no este ni muerto ni hiper-extendido
-      if(g_asiaRange < InpMinAsiaRange || g_asiaRange > InpMaxAsiaRange)
+      SetOptimalFillingMode();
+      if(trade.Buy(lots, _Symbol, entry, sl, tp, comment))
       {
-         UpdateDashboard(dt, "Filtro Volatilidad: Rango Tokio anomalo (" + DoubleToString(g_asiaRange, 2) + " pts). Esperando.");
-         return;
+         g_lastEvaluatedBarTime = currentBarTime;
+         g_dailyTradesCount++;
+         Print("✅ [BUY CONFIRMADO] Ticket #", trade.ResultOrder(), " Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
       }
-      
-      // Filtro de Spread (Proteccion ante manipulaciones y baja liquidez)
-      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      if(spread > InpMaxSpreadPips)
+      else
       {
-         Print("⚠️ Spread elevado: ", spread, " pts. Entrada bloqueada por seguridad.");
-         return;
-      }
-      
-      // Obtener ultimas 2 velas cerradas en M15
-      MqlRates m15[];
-      ArraySetAsSeries(m15, true);
-      if(CopyRates(_Symbol, PERIOD_M15, 1, 2, m15) < 2) return;
-      
-      // Filtro Direccional D1 (Tendencia de vela diaria anterior)
-      MqlRates d1[];
-      ArraySetAsSeries(d1, true);
-      if(CopyRates(_Symbol, PERIOD_D1, 1, 1, d1) < 1) return;
-      
-      bool isDailyBullish = (d1[0].close > d1[0].open);
-      bool isDailyBearish = (d1[0].close < d1[0].open);
-      
-      bool allowLong  = (InpTrendMode == TREND_ANY_BREAKOUT) || (isDailyBullish);
-      bool allowShort = (InpTrendMode == TREND_ANY_BREAKOUT) || (isDailyBearish);
-      
-      double close1 = m15[0].close; // Vela recien cerrada
-      double close2 = m15[1].close; // Vela previa
-      double low1   = m15[0].low;
-      double high1  = m15[0].high;
-      double open1  = m15[0].open;
-      
-      bool isFirstTrade = (g_dailyTradesCount == 0);
-      
-      // --- CONDICION DE COMPRA (BUY) ---
-      // Trade 1: Cierre limpio por encima del High Asiatico
-      // Trade 2: Retesteo con rechazo sobre el High Asiatico y vela verde
-      bool buyBreakout = allowLong && (
-         (isFirstTrade && close1 > g_asiaHigh && close2 <= g_asiaHigh) ||
-         (!isFirstTrade && close1 > g_asiaHigh && low1 >= (g_asiaHigh - 1.5) && close1 > open1)
-      );
-      
-      // --- CONDICION DE VENTA (SELL) ---
-      // Trade 1: Cierre limpio por debajo del Low Asiatico
-      // Trade 2: Retesteo con rechazo bajo el Low Asiatico y vela roja
-      bool sellBreakout = allowShort && (
-         (isFirstTrade && close1 < g_asiaLow && close2 >= g_asiaLow) ||
-         (!isFirstTrade && close1 < g_asiaLow && high1 <= (g_asiaLow + 1.5) && close1 < open1)
-      );
-      
-      // Ejecutar Compra
-      if(buyBreakout && PositionsTotal() == 0)
-      {
-         double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         double sl = isFirstTrade ? g_asiaMid : (entry - MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
-         double riskDistance = entry - sl;
-         double tp = entry + (riskDistance * InpRRRatio);
-         
-         double lots = CalculateLotSize(entry, sl);
-         string comment = StringFormat("LB #%d Long [Ing. Alvarado]", g_dailyTradesCount + 1);
-         
-         if(trade.Buy(lots, _Symbol, entry, sl, tp, comment))
-         {
-            g_lastBarTime = currentBar;
-            g_dailyTradesCount++;
-            g_lastTradeDay = dt.day;
-            Print("✅ BUY EJECUTADO: Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
-         }
-      }
-      // Ejecutar Venta
-      else if(sellBreakout && PositionsTotal() == 0)
-      {
-         double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         double sl = isFirstTrade ? g_asiaMid : (entry + MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
-         double riskDistance = sl - entry;
-         double tp = entry - (riskDistance * InpRRRatio);
-         
-         double lots = CalculateLotSize(entry, sl);
-         string comment = StringFormat("LB #%d Short [Ing. Alvarado]", g_dailyTradesCount + 1);
-         
-         if(trade.Sell(lots, _Symbol, entry, sl, tp, comment))
-         {
-            g_lastBarTime = currentBar;
-            g_dailyTradesCount++;
-            g_lastTradeDay = dt.day;
-            Print("✅ SELL EJECUTADO: Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
-         }
+         Print("❌ Error enviando BUY: ", trade.ResultRetcode(), " - ", trade.ResultComment());
       }
    }
-   else
+   // Ejecucion SELL
+   else if(sellBreakout && botPositions == 0)
    {
-      UpdateDashboard(dt, "Fuera de Ventana Operativa (Esperando apertura Londres 08:00 UTC)");
+      double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double sl = isFirstTrade ? asiaMid : (entry + MathMin(MathMax(asiaRange * 0.5, 4.0), 8.0));
+      sl = NormalizeDouble(sl, _Digits);
+      double riskDistance = sl - entry;
+      double tp = NormalizeDouble(entry - (riskDistance * InpRRRatio), _Digits);
+      
+      double lots = CalculateLotSize(entry, sl);
+      string comment = StringFormat("LB #%d Short [Ing. Alvarado]", g_dailyTradesCount + 1);
+      
+      SetOptimalFillingMode();
+      if(trade.Sell(lots, _Symbol, entry, sl, tp, comment))
+      {
+         g_lastEvaluatedBarTime = currentBarTime;
+         g_dailyTradesCount++;
+         Print("✅ [SELL CONFIRMADO] Ticket #", trade.ResultOrder(), " Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
+      }
+      else
+      {
+         Print("❌ Error enviando SELL: ", trade.ResultRetcode(), " - ", trade.ResultComment());
+      }
    }
+   
+   g_lastEvaluatedBarTime = currentBarTime;
 }
 
 //+------------------------------------------------------------------+
@@ -294,29 +373,29 @@ void ManageBreakeven()
       double riskDist = MathAbs(openPrice - slPrice);
       if(riskDist <= 0) continue;
       
-      // Para COMPRAS: si el precio subio al menos 1:1 R
       if(type == POSITION_TYPE_BUY)
       {
-         if(curBid >= openPrice + riskDist)
+         if(curBid >= (openPrice + riskDist))
          {
-            double beLevel = openPrice + (InpBEBufferPips * 0.10); // +1 pip de resguardo
+            double beLevel = NormalizeDouble(openPrice + InpBEBufferPoints, _Digits);
             if(slPrice < openPrice)
             {
+               SetOptimalFillingMode();
                trade.PositionModify(ticket, beLevel, tpPrice);
-               Print("🛡️ [BREAKEVEN 1:1] Stop Loss trasladado a Precio de Entrada para BUY #", ticket);
+               Print("🛡️ [BREAKEVEN 1:1] Stop Loss protegido para BUY #", ticket, " en ", beLevel);
             }
          }
       }
-      // Para VENTAS: si el precio bajo al menos 1:1 R
       else if(type == POSITION_TYPE_SELL)
       {
-         if(curAsk <= openPrice - riskDist)
+         if(curAsk <= (openPrice - riskDist))
          {
-            double beLevel = openPrice - (InpBEBufferPips * 0.10);
+            double beLevel = NormalizeDouble(openPrice - InpBEBufferPoints, _Digits);
             if(slPrice > openPrice || slPrice == 0.0)
             {
+               SetOptimalFillingMode();
                trade.PositionModify(ticket, beLevel, tpPrice);
-               Print("🛡️ [BREAKEVEN 1:1] Stop Loss trasladado a Precio de Entrada para SELL #", ticket);
+               Print("🛡️ [BREAKEVEN 1:1] Stop Loss protegido para SELL #", ticket, " en ", beLevel);
             }
          }
       }
@@ -331,49 +410,30 @@ double CalculateLotSize(double entry, double sl)
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double riskMoney = balance * (InpRiskPercent / 100.0);
    double points = MathAbs(entry - sl);
-   if(points <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(points <= 0.01) points = 5.0;
    
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickSize <= 0) tickSize = 0.01;
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contractSize <= 0) contractSize = 100.0; // 100 oz estandar en Oro
    
-   double lossPerLot = (points / tickSize) * tickValue;
-   if(lossPerLot <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double dollarRiskPerLot = points * contractSize;
+   if(dollarRiskPerLot <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    
-   double lots = riskMoney / lossPerLot;
+   double lots = riskMoney / dollarRiskPerLot;
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    
+   if(step <= 0) step = 0.01;
    lots = MathFloor(lots / step) * step;
    if(lots < minLot) lots = minLot;
    if(lots > maxLot) lots = maxLot;
    
-   return lots;
-}
-
-//+------------------------------------------------------------------+
-//| Panel Visual de Auditoria en Grafico (HUD)                       |
-//+------------------------------------------------------------------+
-void UpdateDashboard(MqlDateTime &dt, string status)
-{
-   string text = "\\n";
-   text += "╔══════════════════════════════════════════════════════╗\\n";
-   text += "║  SISTEMA CUANTITATIVO XAU/USD LONDON BREAKOUT        ║\\n";
-   text += "║  Desarrollado por el Ing. Francisco Alvarado        ║\\n";
-   text += "╠══════════════════════════════════════════════════════╣\\n";
-   text += StringFormat("║  Hora Actual UTC: %02d:%02d:%02d                       ║\\n", dt.hour, dt.min, dt.sec);
-   text += StringFormat("║  Balance Cuenta: $%.2f USD                         ║\\n", AccountInfoDouble(ACCOUNT_BALANCE));
-   text += StringFormat("║  Rango Tokio: High $%.2f | Low $%.2f (%.1f pts)      ║\\n", g_asiaHigh, g_asiaLow, g_asiaRange);
-   text += StringFormat("║  Trades Hoy: %d / %d | SLs Hoy: %d / %d              ║\\n", g_dailyTradesCount, InpMaxDailyTrades, g_dailySLCount, InpMaxDailySL);
-   text += StringFormat("║  Estatus: %s\\n", status);
-   text += "╚══════════════════════════════════════════════════════╝";
-   Comment(text);
+   return NormalizeDouble(lots, 2);
 }
 `;
 
   // =========================================================================
-  // METATRADER 4 (MQL4) - PRODUCTION READY FOR REAL ACCOUNT
+  // METATRADER 4 (MQL4) - PRODUCTION READY FOR REAL ACCOUNT & BACKTESTER
   // =========================================================================
   const mql4Code = `//+------------------------------------------------------------------+
 //|                                     XAUUSD_LondonBreakout_Quant.mq4 |
@@ -383,8 +443,8 @@ void UpdateDashboard(MqlDateTime &dt, string status)
 //+------------------------------------------------------------------+
 #property copyright "Ingeniero Francisco Alvarado - Cuantitativo XAU/USD"
 #property link      "https://github.com/francisco-alvarado-quant"
-#property version   "2.50"
-#property description "Robot Cuantitativo XAU/USD para MetaTrader 4. Incluye Ruptura, Retesteo, Filtro D1, Proteccion Breakeven Dinamica 1:1 y Control Estricto de Riesgo Monetario."
+#property version   "3.00"
+#property description "Robot Cuantitativo XAU/USD para MetaTrader 4. Incluye Ruptura, Retesteo, Sincronizacion GMT de Broker, Proteccion Breakeven Dinamica 1:1 y Calculo Exacto de Riesgo."
 #property strict
 
 //--- Parametros de Entrada
@@ -395,39 +455,36 @@ extern double   InpRRRatio        = 2.0;          // Ratio Riesgo/Beneficio (1:2
 extern int      InpMaxDailySL     = 2;            // Limite Diario de Perdidas (Circuit Breaker)
 extern int      InpMaxDailyTrades = 2;            // Maximo de Trades por Dia (1 o 2)
 
-extern string   sep1              = "=== Horarios de Sesion (Hora UTC) ===";
-extern int      InpStartAsia      = 0;            // Inicio Rango Asiatico (Hora UTC)
-extern int      InpEndAsia        = 6;            // Fin Rango Asiatico (Hora UTC)
-extern int      InpStartLondon    = 8;            // Inicio Ventana Londres (Hora UTC)
-extern int      InpEndLondon      = 13;           // Fin Ventana Londres (Hora UTC)
+extern string   sep1              = "=== Sincronizacion Horaria (Broker vs UTC) ===";
+extern int      InpBrokerGmtOffset= 3;            // Desplazamiento GMT del Broker (GMT+3 en verano, GMT+2 en invierno)
+extern int      InpStartAsiaUTC   = 0;            // Inicio Rango Asiatico (Hora UTC)
+extern int      InpEndAsiaUTC     = 6;            // Fin Rango Asiatico (Hora UTC)
+extern int      InpStartLondonUTC = 8;            // Inicio Ventana Londres (Hora UTC)
+extern int      InpEndLondonUTC   = 13;           // Fin Ventana Londres (Hora UTC)
 
 extern string   sep2              = "=== Filtros Cuantitativos ===";
 extern bool     InpUseD1Trend     = false;        // true = Filtro D1 Estricto | false = Ambas Direcciones
 extern double   InpMinAsiaRange   = 6.0;          // Rango Minimo Tokio ($ pts)
 extern double   InpMaxAsiaRange   = 22.0;         // Rango Maximo Tokio ($ pts)
-extern int      InpMaxSpread      = 35;           // Spread Maximo Permitido (pips/cents)
-extern int      InpSlippage       = 3;            // Tolerancia de Deslizamiento
+extern int      InpMaxSpread      = 50;           // Spread Maximo Permitido (pips/cents)
+extern int      InpSlippage       = 5;            // Tolerancia de Deslizamiento
 
 extern string   sep3              = "=== Blindaje Breakeven ===";
 extern bool     InpEnableBE       = true;         // Activar Proteccion Breakeven 1:1
-extern double   InpBEBufferPips   = 1.0;          // Buffer de Ganancia minima (pips)
+extern double   InpBEBufferPoints = 0.20;         // Buffer por encima de entrada ($0.20 Oro)
 
 //--- Variables Globales
-double   g_asiaHigh         = 0.0;
-double   g_asiaLow          = 0.0;
-double   g_asiaRange        = 0.0;
-double   g_asiaMid          = 0.0;
-int      g_lastDay          = -1;
-int      g_dailyTradesCount = 0;
-int      g_dailySLCount     = 0;
-datetime g_lastBar          = 0;
+datetime g_lastEvaluatedBarTime = 0;
+string   g_lastTradeDate        = "";
+int      g_dailyTradesCount     = 0;
+int      g_dailySLCount         = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("Robot Cuantitativo XAU/USD MT4 Inicializado. Ing. Francisco Alvarado.");
+   Print("Robot Cuantitativo XAU/USD MT4 v3.0 Inicializado. Ing. Francisco Alvarado.");
    return(INIT_SUCCEEDED);
 }
 
@@ -440,121 +497,180 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
+//| Calcula el Rango Asiatico exacto del dia en MT4                  |
+//+------------------------------------------------------------------+
+bool GetTodayAsianRangeMT4(datetime currentBarTime, double &outHigh, double &outLow, double &outMid, double &outRange)
+{
+   int startServerHour = InpStartAsiaUTC + InpBrokerGmtOffset;
+   int endServerHour   = InpEndAsiaUTC + InpBrokerGmtOffset;
+   
+   int dayOfYear = TimeDayOfYear(currentBarTime);
+   int year = TimeYear(currentBarTime);
+   
+   double maxH = -1.0;
+   double minL = 9999999.0;
+   int barsFound = 0;
+   
+   // Escanear velas M15 del dia
+   for(int i = 0; i < 150; i++)
+   {
+      datetime barTime = Time[i];
+      if(TimeYear(barTime) != year || TimeDayOfYear(barTime) != dayOfYear)
+      {
+         if(i > 0) break; // Fin del dia de hoy
+         continue;
+      }
+      
+      int h = TimeHour(barTime);
+      if(h >= startServerHour && h < endServerHour)
+      {
+         if(High[i] > maxH) maxH = High[i];
+         if(Low[i] < minL)  minL = Low[i];
+         barsFound++;
+      }
+   }
+   
+   if(barsFound == 0 || maxH <= 0 || minL >= 9999999.0 || maxH <= minL) return false;
+   
+   outHigh  = NormalizeDouble(maxH, Digits);
+   outLow   = NormalizeDouble(minL, Digits);
+   outMid   = NormalizeDouble((outHigh + outLow) / 2.0, Digits);
+   outRange = NormalizeDouble(outHigh - outLow, Digits);
+   return true;
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   int hourUTC = TimeHour(TimeGMT());
-   int minUTC  = TimeMinute(TimeGMT());
-   int dayUTC  = TimeDay(TimeGMT());
+   datetime currentServerTime = TimeCurrent();
+   int serverHour = TimeHour(currentServerTime);
+   int serverMin  = TimeMinute(currentServerTime);
+   
+   string todayDateStr = TimeToStr(currentServerTime, TIME_DATE);
    
    // Reset diario
-   if(hourUTC == 0 && minUTC == 0 && g_lastDay != dayUTC)
+   if(g_lastTradeDate != todayDateStr)
    {
-      g_asiaHigh = 0.0;
-      g_asiaLow  = 0.0;
+      g_lastTradeDate = todayDateStr;
       g_dailyTradesCount = 0;
       g_dailySLCount = 0;
-      g_lastDay = dayUTC;
    }
    
    // 1. Gestion de Breakeven Activo
    if(InpEnableBE) ManageBreakevenMT4();
    
-   // 2. Delimitacion Rango Asiatico (00:00 a 06:00 UTC)
-   if(hourUTC >= InpStartAsia && hourUTC < InpEndAsia)
+   // Conversion a UTC
+   int currentUtcHour = (serverHour - InpBrokerGmtOffset + 24) % 24;
+   
+   // Solo evaluar cuando cierra una vela M15
+   datetime currentBarTime = Time[0];
+   if(g_lastEvaluatedBarTime == currentBarTime) return;
+   
+   // 2. Ventana Operativa de Londres (08:00 a 13:00 UTC)
+   bool isLondonWindow = (currentUtcHour >= InpStartLondonUTC && currentUtcHour < InpEndLondonUTC);
+   
+   if(!isLondonWindow)
    {
-      double h = High[0];
-      double l = Low[0];
-      if(g_asiaHigh == 0.0 || h > g_asiaHigh) g_asiaHigh = h;
-      if(g_asiaLow == 0.0  || l < g_asiaLow)  g_asiaLow  = l;
-      g_asiaRange = g_asiaHigh - g_asiaLow;
-      g_asiaMid   = (g_asiaHigh + g_asiaLow) / 2.0;
-      
-      Comment("\\n[XAU/USD Bot Cuantitativo - Ing. Francisco Alvarado]\\nFase: Rango Tokio | High: " + DoubleToString(g_asiaHigh,2) + " | Low: " + DoubleToString(g_asiaLow,2));
+      Comment(StringFormat("\\n[XAU/USD Bot MT4 - Ing. Francisco Alvarado]\\nHora Broker: %02d:%02d | Hora UTC: %02d:%02d\\nEstado: Esperando apertura de Londres (08:00 UTC)", serverHour, serverMin, currentUtcHour, serverMin));
       return;
    }
    
-   // 3. Verificacion de Circuit Breaker
+   // 3. Circuito de Proteccion Diario
    if(g_dailySLCount >= InpMaxDailySL || g_dailyTradesCount >= InpMaxDailyTrades)
    {
-      Comment("\\n[XAU/USD Bot Cuantitativo - Ing. Francisco Alvarado]\\nTrading completado o pausado por limite diario.");
+      Comment("\\n[XAU/USD Bot MT4 - Ing. Francisco Alvarado]\\nTrading completado o pausado por limite diario.");
       return;
    }
    
-   // 4. Ventana Operativa de Londres (08:00 a 13:00 UTC)
-   if(hourUTC >= InpStartLondon && hourUTC < InpEndLondon)
+   // 4. Obtener Rango Asiatico
+   double asiaHigh = 0.0, asiaLow = 0.0, asiaMid = 0.0, asiaRange = 0.0;
+   if(!GetTodayAsianRangeMT4(currentBarTime, asiaHigh, asiaLow, asiaMid, asiaRange))
    {
-      if(g_lastBar == Time[0]) return; // Esperar cierre de vela M15
+      Comment("\\n[XAU/USD Bot MT4 - Ing. Francisco Alvarado]\\nCalculando Rango de Tokio...");
+      return;
+   }
+   
+   // 5. Filtros de calidad
+   if(asiaRange < InpMinAsiaRange || asiaRange > InpMaxAsiaRange) return;
+   if(MarketInfo(Symbol(), MODE_SPREAD) > InpMaxSpread) return;
+   
+   // 6. Tendencia D1 anterior
+   double d1Close = iClose(Symbol(), PERIOD_D1, 1);
+   double d1Open  = iOpen(Symbol(), PERIOD_D1, 1);
+   bool isD1Bullish = (d1Close > d1Open);
+   bool isD1Bearish = (d1Close < d1Open);
+   
+   bool allowBuy  = (!InpUseD1Trend) || isD1Bullish;
+   bool allowSell = (!InpUseD1Trend) || isD1Bearish;
+   
+   double c1 = Close[1];
+   double c2 = Close[2];
+   double l1 = Low[1];
+   double h1 = High[1];
+   double o1 = Open[1];
+   
+   bool isFirst = (g_dailyTradesCount == 0);
+   
+   // Gatillo BUY
+   bool buySig = allowBuy && (
+      (isFirst && c1 > asiaHigh && c2 <= asiaHigh) ||
+      (!isFirst && c1 > asiaHigh && l1 >= (asiaHigh - 1.5) && c1 > o1)
+   );
+   
+   // Gatillo SELL
+   bool sellSig = allowSell && (
+      (isFirst && c1 < asiaLow && c2 >= asiaLow) ||
+      (!isFirst && c1 < asiaLow && h1 <= (asiaLow + 1.5) && c1 < o1)
+   );
+   
+   int openOrders = CountOpenOrdersMT4();
+   
+   if(buySig && openOrders == 0)
+   {
+      double entry = Ask;
+      double sl = isFirst ? asiaMid : (entry - MathMin(MathMax(asiaRange * 0.5, 4.0), 8.0));
+      sl = NormalizeDouble(sl, Digits);
+      double risk = entry - sl;
+      double tp = NormalizeDouble(entry + (risk * InpRRRatio), Digits);
+      double lots = CalculateLotsMT4(entry, sl);
       
-      // Filtros de calidad
-      if(g_asiaRange < InpMinAsiaRange || g_asiaRange > InpMaxAsiaRange) return;
-      if(MarketInfo(Symbol(), MODE_SPREAD) > InpMaxSpread) return;
-      
-      // Tendencia D1 anterior
-      double d1Close = iClose(Symbol(), PERIOD_D1, 1);
-      double d1Open  = iOpen(Symbol(), PERIOD_D1, 1);
-      bool isD1Bullish = (d1Close > d1Open);
-      bool isD1Bearish = (d1Close < d1Open);
-      
-      bool allowBuy  = (!InpUseD1Trend) || isD1Bullish;
-      bool allowSell = (!InpUseD1Trend) || isD1Bearish;
-      
-      double c1 = Close[1];
-      double c2 = Close[2];
-      double l1 = Low[1];
-      double h1 = High[1];
-      double o1 = Open[1];
-      
-      bool isFirst = (g_dailyTradesCount == 0);
-      
-      // Gatillo BUY
-      bool buySig = allowBuy && (
-         (isFirst && c1 > g_asiaHigh && c2 <= g_asiaHigh) ||
-         (!isFirst && c1 > g_asiaHigh && l1 >= (g_asiaHigh - 1.5) && c1 > o1)
-      );
-      
-      // Gatillo SELL
-      bool sellSig = allowSell && (
-         (isFirst && c1 < g_asiaLow && c2 >= g_asiaLow) ||
-         (!isFirst && c1 < g_asiaLow && h1 <= (g_asiaLow + 1.5) && c1 < o1)
-      );
-      
-      int openOrders = CountOpenOrders();
-      
-      if(buySig && openOrders == 0)
+      int ticket = OrderSend(Symbol(), OP_BUY, lots, entry, InpSlippage, sl, tp, "LB Buy [Ing. Alvarado]", InpMagicNumber, 0, clrGreen);
+      if(ticket > 0)
       {
-         double entry = Ask;
-         double sl = isFirst ? g_asiaMid : (entry - MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
-         double risk = entry - sl;
-         double tp = entry + (risk * InpRRRatio);
-         double lots = CalculateLotsMT4(entry, sl);
-         
-         int ticket = OrderSend(Symbol(), OP_BUY, lots, entry, InpSlippage, sl, tp, "LB Buy [Ing. Alvarado]", InpMagicNumber, 0, clrGreen);
-         if(ticket > 0)
-         {
-            g_lastBar = Time[0];
-            g_dailyTradesCount++;
-            Print("✅ BUY EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots);
-         }
+         g_lastEvaluatedBarTime = currentBarTime;
+         g_dailyTradesCount++;
+         Print("✅ BUY EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
       }
-      else if(sellSig && openOrders == 0)
+      else
       {
-         double entry = Bid;
-         double sl = isFirst ? g_asiaMid : (entry + MathMin(MathMax(g_asiaRange * 0.5, 4.0), 8.0));
-         double risk = sl - entry;
-         double tp = entry - (risk * InpRRRatio);
-         double lots = CalculateLotsMT4(entry, sl);
-         
-         int ticket = OrderSend(Symbol(), OP_SELL, lots, entry, InpSlippage, sl, tp, "LB Sell [Ing. Alvarado]", InpMagicNumber, 0, clrRed);
-         if(ticket > 0)
-         {
-            g_lastBar = Time[0];
-            g_dailyTradesCount++;
-            Print("✅ SELL EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots);
-         }
+         Print("❌ Error enviando BUY MT4: ", GetLastError());
       }
    }
+   else if(sellSig && openOrders == 0)
+   {
+      double entry = Bid;
+      double sl = isFirst ? asiaMid : (entry + MathMin(MathMax(asiaRange * 0.5, 4.0), 8.0));
+      sl = NormalizeDouble(sl, Digits);
+      double risk = sl - entry;
+      double tp = NormalizeDouble(entry - (risk * InpRRRatio), Digits);
+      double lots = CalculateLotsMT4(entry, sl);
+      
+      int ticket = OrderSend(Symbol(), OP_SELL, lots, entry, InpSlippage, sl, tp, "LB Sell [Ing. Alvarado]", InpMagicNumber, 0, clrRed);
+      if(ticket > 0)
+      {
+         g_lastEvaluatedBarTime = currentBarTime;
+         g_dailyTradesCount++;
+         Print("✅ SELL EJECUTADO MT4: Ticket #", ticket, " Lotes=", lots, " Entrada=", entry, " SL=", sl, " TP=", tp);
+      }
+      else
+      {
+         Print("❌ Error enviando SELL MT4: ", GetLastError());
+      }
+   }
+   
+   g_lastEvaluatedBarTime = currentBarTime;
 }
 
 //+------------------------------------------------------------------+
@@ -565,25 +681,25 @@ double CalculateLotsMT4(double entry, double sl)
    double balance = AccountBalance();
    double riskMoney = balance * (InpRiskPercent / 100.0);
    double points = MathAbs(entry - sl);
-   if(points <= 0) return MarketInfo(Symbol(), MODE_MINLOT);
+   if(points <= 0.01) points = 5.0;
    
-   double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
-   double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
-   if(tickSize <= 0) tickSize = 0.01;
+   double contractSize = MarketInfo(Symbol(), MODE_LOTSIZE);
+   if(contractSize <= 0) contractSize = 100.0;
    
-   double lossPerLot = (points / tickSize) * tickValue;
-   if(lossPerLot <= 0) return MarketInfo(Symbol(), MODE_MINLOT);
+   double dollarRiskPerLot = points * contractSize;
+   if(dollarRiskPerLot <= 0) return MarketInfo(Symbol(), MODE_MINLOT);
    
-   double lots = riskMoney / lossPerLot;
+   double lots = riskMoney / dollarRiskPerLot;
    double step = MarketInfo(Symbol(), MODE_LOTSTEP);
    double minLot = MarketInfo(Symbol(), MODE_MINLOT);
    double maxLot = MarketInfo(Symbol(), MODE_MAXLOT);
    
+   if(step <= 0) step = 0.01;
    lots = MathFloor(lots / step) * step;
    if(lots < minLot) lots = minLot;
    if(lots > maxLot) lots = maxLot;
    
-   return lots;
+   return NormalizeDouble(lots, 2);
 }
 
 //+------------------------------------------------------------------+
@@ -604,9 +720,9 @@ void ManageBreakevenMT4()
       
       if(OrderType() == OP_BUY)
       {
-         if(Bid >= openPrice + riskDist)
+         if(Bid >= (openPrice + riskDist))
          {
-            double beLevel = openPrice + (InpBEBufferPips * 0.10);
+            double beLevel = NormalizeDouble(openPrice + InpBEBufferPoints, Digits);
             if(currentSL < openPrice)
             {
                OrderModify(OrderTicket(), openPrice, beLevel, currentTP, 0, clrCyan);
@@ -616,9 +732,9 @@ void ManageBreakevenMT4()
       }
       else if(OrderType() == OP_SELL)
       {
-         if(Ask <= openPrice - riskDist)
+         if(Ask <= (openPrice - riskDist))
          {
-            double beLevel = openPrice - (InpBEBufferPips * 0.10);
+            double beLevel = NormalizeDouble(openPrice - InpBEBufferPoints, Digits);
             if(currentSL > openPrice || currentSL == 0.0)
             {
                OrderModify(OrderTicket(), openPrice, beLevel, currentTP, 0, clrCyan);
@@ -629,7 +745,7 @@ void ManageBreakevenMT4()
    }
 }
 
-int CountOpenOrders()
+int CountOpenOrdersMT4()
 {
    int count = 0;
    for(int i = 0; i < OrdersTotal(); i++)
