@@ -113,208 +113,234 @@ export function evaluateStrategyDay(
 ): {
   asianRange: AsianRange | null;
   trade: TradeSignal | null;
+  trades: TradeSignal[];
 } {
   const candlesWithEma = calculateEMA(candles, 20);
   const asianRange = getAsianRange(candlesWithEma, params.startHourAsia, params.endHourAsia);
 
   if (!asianRange) {
-    return { asianRange: null, trade: null };
+    return { asianRange: null, trade: null, trades: [] };
   }
 
-  let trade: TradeSignal | null = null;
-  let tradeExecutedToday = false;
+  const trades: TradeSignal[] = [];
+  const maxTrades = params.maxTradesPerDay ?? 2;
+  const maxSl = params.maxSlPerDay ?? 2;
+  let slCount = 0;
+  let lastExitBarIndex = -1;
 
   for (let i = 1; i < candlesWithEma.length; i++) {
+    if (trades.length >= maxTrades) break;
+    if (slCount >= maxSl) break;
+    if (i <= lastExitBarIndex) continue;
+
     const prevCandle = candlesWithEma[i - 1];
     const currentCandle = candlesWithEma[i];
 
-    // Check if candle is within London Entry Window (e.g. 07:00/08:00 - 10:00/11:00 UTC)
+    // Check if candle is within London Entry Window (08:00 - 11:00 UTC)
     const inLondonWindow =
       (currentCandle.hour > params.startLondon ||
         (currentCandle.hour === params.startLondon && currentCandle.minute >= 0)) &&
       (currentCandle.hour < params.endLondonTrade ||
         (currentCandle.hour === params.endLondonTrade && currentCandle.minute === 0));
 
-    if (!tradeExecutedToday && inLondonWindow) {
-      // Condition 1: Bullish Breakout
-      // Close breaks above Asian High with body (close > asianHigh), previous close was within/below, and D1 was Bullish
-      const breakoutLong =
+    if (!inLondonWindow) continue;
+
+    const isFirstTrade = trades.length === 0;
+    const allowLongByTrend = params.trendMode === 'D1_STRICT' ? prevDayTrend === 'BULLISH' : true;
+    const allowShortByTrend = params.trendMode === 'D1_STRICT' ? prevDayTrend === 'BEARISH' : true;
+
+    // Condition 1: Bullish Breakout
+    // Trade 1: Clean M15 close above Asian High
+    // Trade 2: Retest / continuation above Asian High with positive momentum
+    const breakoutLong =
+      allowLongByTrend &&
+      ((isFirstTrade && currentCandle.close > asianRange.high && prevCandle.close <= asianRange.high) ||
+       (!isFirstTrade &&
         currentCandle.close > asianRange.high &&
-        prevCandle.close <= asianRange.high &&
-        prevDayTrend === 'BULLISH';
+        currentCandle.low >= asianRange.high - 1.5 &&
+        currentCandle.close > currentCandle.open));
 
-      // Condition 2: Bearish Breakout
-      // Close breaks below Asian Low with body (close < asianLow), previous close was within/above, and D1 was Bearish
-      const breakoutShort =
+    // Condition 2: Bearish Breakout
+    // Trade 1: Clean M15 close below Asian Low
+    // Trade 2: Retest / continuation below Asian Low with negative momentum
+    const breakoutShort =
+      allowShortByTrend &&
+      ((isFirstTrade && currentCandle.close < asianRange.low && prevCandle.close >= asianRange.low) ||
+       (!isFirstTrade &&
         currentCandle.close < asianRange.low &&
-        prevCandle.close >= asianRange.low &&
-        prevDayTrend === 'BEARISH';
+        currentCandle.high <= asianRange.low + 1.5 &&
+        currentCandle.close < currentCandle.open));
 
-      if (breakoutLong || breakoutShort) {
-        tradeExecutedToday = true;
-        const type = breakoutLong ? 'LONG' : 'SHORT';
-        const entryPrice = currentCandle.close;
+    if (breakoutLong || breakoutShort) {
+      const type = breakoutLong ? 'LONG' : 'SHORT';
+      const entryPrice = currentCandle.close;
 
-        let slPrice = 0;
-        if (params.slMethod === '50_PERCENT') {
-          // Mathematical 50% of the Asian Range
-          if (type === 'LONG') {
-            slPrice = entryPrice - asianRange.rangePoints * 0.5;
-            // Or alternatively, mid-point of the range if preferred
-            if (slPrice > asianRange.midpoint) {
-              slPrice = asianRange.midpoint;
-            }
-          } else {
-            slPrice = entryPrice + asianRange.rangePoints * 0.5;
-            if (slPrice < asianRange.midpoint) {
-              slPrice = asianRange.midpoint;
-            }
-          }
-        } else if (params.slMethod === 'EMA_20') {
-          slPrice = currentCandle.ema20 || (type === 'LONG' ? asianRange.low : asianRange.high);
-        } else {
-          // OPPOSITE_RANGE
-          slPrice = type === 'LONG' ? asianRange.low : asianRange.high;
-        }
-
-        slPrice = parseFloat(slPrice.toFixed(2));
-
-        // Calculate Take Profit using exact R:R
-        const riskDistance = Math.abs(entryPrice - slPrice);
-        const tpDistance = riskDistance * params.rrRatio;
-        const tpPrice = parseFloat(
-          (type === 'LONG' ? entryPrice + tpDistance : entryPrice - tpDistance).toFixed(2)
-        );
-
-        // Position size calculation
-        // Calculate risk percent with respect to daily limit coherence if enabled
-        const effectiveRiskPercent = params.autoRiskPerTrade
-          ? params.dailyRiskLimitPercent / (params.maxSlPerDay || 2)
-          : params.riskPercent;
-
-        const sizing = calculatePositionSize(
-          params.accountBalance,
-          effectiveRiskPercent,
-          entryPrice,
-          slPrice
-        );
-
-        const projectedProfitUSD = parseFloat((sizing.riskAmountUSD * params.rrRatio).toFixed(2));
-
-        // Breakeven calculation parameters
-        const beRatio = params.beTriggerRatio || 1.0;
-        const beOffsetUSD = (params.beOffsetPips || 0) * 0.1;
-        const beTriggerPrice = parseFloat(
-          (type === 'LONG' ? entryPrice + riskDistance * beRatio : entryPrice - riskDistance * beRatio).toFixed(2)
-        );
-        const bePriceLevel = parseFloat(
-          (type === 'LONG' ? entryPrice + beOffsetUSD : entryPrice - beOffsetUSD).toFixed(2)
-        );
-
-        trade = {
-          id: `trade-${currentCandle.time}`,
-          date: currentCandle.time.split(' ')[0],
-          type,
-          barIndex: i,
-          time: currentCandle.time,
-          entryPrice,
-          slPrice,
-          originalSlPrice: slPrice,
-          tpPrice,
-          riskAmountUSD: sizing.riskAmountUSD,
-          projectedProfitUSD,
-          lotSize: sizing.lotSize,
-          status: 'ACTIVE',
-          isBreakevenTriggered: false,
-          bePrice: bePriceLevel,
-        };
-
-        let currentSl = slPrice;
-
-        // Forward simulate subsequent candles to check outcome
-        for (let j = i + 1; j < candlesWithEma.length; j++) {
-          const futureCandle = candlesWithEma[j];
-
-          // 1. Check Breakeven Trigger (1:1 Ratio achieved)
-          if (params.enableBreakEven && !trade.isBreakevenTriggered) {
-            const hitBeCondition =
-              type === 'LONG'
-                ? futureCandle.high >= beTriggerPrice
-                : futureCandle.low <= beTriggerPrice;
-
-            if (hitBeCondition) {
-              trade.isBreakevenTriggered = true;
-              trade.beTriggeredTime = futureCandle.time;
-              currentSl = bePriceLevel;
-              trade.slPrice = bePriceLevel; // Move SL to Entry (Breakeven)
-            }
-          }
-
-          // 2. Check Outcomes (Take Profit vs Stop Loss / Breakeven)
-          if (type === 'LONG') {
-            if (futureCandle.high >= tpPrice) {
-              trade.status = 'HIT_TP';
-              trade.exitPrice = tpPrice;
-              trade.exitTime = futureCandle.time;
-              trade.exitReason = 'TAKE_PROFIT';
-              trade.pnlUSD = projectedProfitUSD;
-              trade.pnlPips = parseFloat(((tpPrice - entryPrice) * 10).toFixed(1));
-              break;
-            } else if (futureCandle.low <= currentSl) {
-              if (trade.isBreakevenTriggered) {
-                trade.status = 'BREAKEVEN';
-                trade.exitPrice = currentSl;
-                trade.exitTime = futureCandle.time;
-                trade.exitReason = 'BREAKEVEN';
-                const pnl = parseFloat(((currentSl - entryPrice) * 100 * sizing.lotSize).toFixed(2));
-                trade.pnlUSD = pnl >= 0 ? pnl : 0;
-                trade.pnlPips = parseFloat(((currentSl - entryPrice) * 10).toFixed(1));
-              } else {
-                trade.status = 'HIT_SL';
-                trade.exitPrice = currentSl;
-                trade.exitTime = futureCandle.time;
-                trade.exitReason = 'STOP_LOSS';
-                trade.pnlUSD = -sizing.riskAmountUSD;
-                trade.pnlPips = -parseFloat(((entryPrice - currentSl) * 10).toFixed(1));
-              }
-              break;
-            }
-          } else {
-            // SHORT
-            if (futureCandle.low <= tpPrice) {
-              trade.status = 'HIT_TP';
-              trade.exitPrice = tpPrice;
-              trade.exitTime = futureCandle.time;
-              trade.exitReason = 'TAKE_PROFIT';
-              trade.pnlUSD = projectedProfitUSD;
-              trade.pnlPips = parseFloat(((entryPrice - tpPrice) * 10).toFixed(1));
-              break;
-            } else if (futureCandle.high >= currentSl) {
-              if (trade.isBreakevenTriggered) {
-                trade.status = 'BREAKEVEN';
-                trade.exitPrice = currentSl;
-                trade.exitTime = futureCandle.time;
-                trade.exitReason = 'BREAKEVEN';
-                const pnl = parseFloat(((entryPrice - currentSl) * 100 * sizing.lotSize).toFixed(2));
-                trade.pnlUSD = pnl >= 0 ? pnl : 0;
-                trade.pnlPips = parseFloat(((entryPrice - currentSl) * 10).toFixed(1));
-              } else {
-                trade.status = 'HIT_SL';
-                trade.exitPrice = currentSl;
-                trade.exitTime = futureCandle.time;
-                trade.exitReason = 'STOP_LOSS';
-                trade.pnlUSD = -sizing.riskAmountUSD;
-                trade.pnlPips = -parseFloat(((currentSl - entryPrice) * 10).toFixed(1));
-              }
-              break;
-            }
-          }
-        }
-
-        break; // Only 1 trade per day
+      let slPrice = 0;
+      if (!isFirstTrade) {
+        // Trade 2: Retest swing SL (4 to 8 points risk based on range)
+        const riskPoints = Math.min(Math.max(asianRange.rangePoints * 0.5, 4.0), 8.0);
+        slPrice = type === 'LONG' ? entryPrice - riskPoints : entryPrice + riskPoints;
+      } else if (params.slMethod === '50_PERCENT') {
+        slPrice = asianRange.midpoint;
+      } else if (params.slMethod === 'EMA_20') {
+        slPrice = currentCandle.ema20 || (type === 'LONG' ? asianRange.low : asianRange.high);
+      } else {
+        slPrice = type === 'LONG' ? asianRange.low : asianRange.high;
       }
+
+      slPrice = parseFloat(slPrice.toFixed(2));
+
+      // Calculate Take Profit using exact R:R
+      const riskDistance = Math.abs(entryPrice - slPrice);
+      const tpDistance = riskDistance * params.rrRatio;
+      const tpPrice = parseFloat(
+        (type === 'LONG' ? entryPrice + tpDistance : entryPrice - tpDistance).toFixed(2)
+      );
+
+      // Position size calculation
+      const effectiveRiskPercent = params.autoRiskPerTrade
+        ? params.dailyRiskLimitPercent / (params.maxSlPerDay || 2)
+        : params.riskPercent;
+
+      const sizing = calculatePositionSize(
+        params.accountBalance,
+        effectiveRiskPercent,
+        entryPrice,
+        slPrice
+      );
+
+      const projectedProfitUSD = parseFloat((sizing.riskAmountUSD * params.rrRatio).toFixed(2));
+
+      // Breakeven calculation parameters
+      const beRatio = params.beTriggerRatio || 1.0;
+      const beOffsetUSD = (params.beOffsetPips || 0) * 0.1;
+      const beTriggerPrice = parseFloat(
+        (type === 'LONG' ? entryPrice + riskDistance * beRatio : entryPrice - riskDistance * beRatio).toFixed(2)
+      );
+      const bePriceLevel = parseFloat(
+        (type === 'LONG' ? entryPrice + beOffsetUSD : entryPrice - beOffsetUSD).toFixed(2)
+      );
+
+      const currentTrade: TradeSignal = {
+        id: `trade-${currentCandle.time}-${trades.length + 1}`,
+        date: currentCandle.time.split(' ')[0],
+        type,
+        barIndex: i,
+        time: currentCandle.time,
+        entryPrice,
+        slPrice,
+        originalSlPrice: slPrice,
+        tpPrice,
+        riskAmountUSD: sizing.riskAmountUSD,
+        projectedProfitUSD,
+        lotSize: sizing.lotSize,
+        status: 'ACTIVE',
+        isBreakevenTriggered: false,
+        bePrice: bePriceLevel,
+      };
+
+      let currentSl = slPrice;
+      let exitBar = candlesWithEma.length - 1;
+
+      // Forward simulate subsequent candles to check outcome
+      for (let j = i + 1; j < candlesWithEma.length; j++) {
+        const futureCandle = candlesWithEma[j];
+
+        // 1. Check Outcomes
+        if (type === 'LONG') {
+          if (futureCandle.high >= tpPrice) {
+            currentTrade.status = 'HIT_TP';
+            currentTrade.exitPrice = tpPrice;
+            currentTrade.exitTime = futureCandle.time;
+            currentTrade.exitReason = 'TAKE_PROFIT';
+            currentTrade.pnlUSD = projectedProfitUSD;
+            currentTrade.pnlPips = parseFloat(((tpPrice - entryPrice) * 10).toFixed(1));
+            exitBar = j;
+            break;
+          } else if (futureCandle.low <= currentSl) {
+            if (currentTrade.isBreakevenTriggered) {
+              currentTrade.status = 'BREAKEVEN';
+              currentTrade.exitPrice = currentSl;
+              currentTrade.exitTime = futureCandle.time;
+              currentTrade.exitReason = 'BREAKEVEN';
+              const pnl = parseFloat(((currentSl - entryPrice) * 100 * sizing.lotSize).toFixed(2));
+              currentTrade.pnlUSD = pnl >= 0 ? pnl : 0;
+              currentTrade.pnlPips = parseFloat(((currentSl - entryPrice) * 10).toFixed(1));
+            } else {
+              currentTrade.status = 'HIT_SL';
+              currentTrade.exitPrice = currentSl;
+              currentTrade.exitTime = futureCandle.time;
+              currentTrade.exitReason = 'STOP_LOSS';
+              currentTrade.pnlUSD = -sizing.riskAmountUSD;
+              currentTrade.pnlPips = -parseFloat(((entryPrice - currentSl) * 10).toFixed(1));
+              slCount++;
+            }
+            exitBar = j;
+            break;
+          }
+
+          // Breakeven check for subsequent candles
+          if (params.enableBreakEven && !currentTrade.isBreakevenTriggered) {
+            if (futureCandle.high >= beTriggerPrice) {
+              currentTrade.isBreakevenTriggered = true;
+              currentTrade.beTriggeredTime = futureCandle.time;
+              currentSl = bePriceLevel;
+              currentTrade.slPrice = bePriceLevel;
+            }
+          }
+        } else {
+          // SHORT
+          if (futureCandle.low <= tpPrice) {
+            currentTrade.status = 'HIT_TP';
+            currentTrade.exitPrice = tpPrice;
+            currentTrade.exitTime = futureCandle.time;
+            currentTrade.exitReason = 'TAKE_PROFIT';
+            currentTrade.pnlUSD = projectedProfitUSD;
+            currentTrade.pnlPips = parseFloat(((entryPrice - tpPrice) * 10).toFixed(1));
+            exitBar = j;
+            break;
+          } else if (futureCandle.high >= currentSl) {
+            if (currentTrade.isBreakevenTriggered) {
+              currentTrade.status = 'BREAKEVEN';
+              currentTrade.exitPrice = currentSl;
+              currentTrade.exitTime = futureCandle.time;
+              currentTrade.exitReason = 'BREAKEVEN';
+              const pnl = parseFloat(((entryPrice - currentSl) * 100 * sizing.lotSize).toFixed(2));
+              currentTrade.pnlUSD = pnl >= 0 ? pnl : 0;
+              currentTrade.pnlPips = parseFloat(((entryPrice - currentSl) * 10).toFixed(1));
+            } else {
+              currentTrade.status = 'HIT_SL';
+              currentTrade.exitPrice = currentSl;
+              currentTrade.exitTime = futureCandle.time;
+              currentTrade.exitReason = 'STOP_LOSS';
+              currentTrade.pnlUSD = -sizing.riskAmountUSD;
+              currentTrade.pnlPips = -parseFloat(((currentSl - entryPrice) * 10).toFixed(1));
+              slCount++;
+            }
+            exitBar = j;
+            break;
+          }
+
+          // Breakeven check for subsequent candles
+          if (params.enableBreakEven && !currentTrade.isBreakevenTriggered) {
+            if (futureCandle.low <= beTriggerPrice) {
+              currentTrade.isBreakevenTriggered = true;
+              currentTrade.beTriggeredTime = futureCandle.time;
+              currentSl = bePriceLevel;
+              currentTrade.slPrice = bePriceLevel;
+            }
+          }
+        }
+      }
+
+      trades.push(currentTrade);
+      lastExitBarIndex = exitBar;
     }
   }
 
-  return { asianRange, trade };
+  return {
+    asianRange,
+    trade: trades[0] || null,
+    trades,
+  };
 }

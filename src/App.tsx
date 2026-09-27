@@ -71,6 +71,7 @@ export default function App() {
     enableBreakEven: true,      // Mover SL al punto de entrada al alcanzar 1:1
     beTriggerRatio: 1.0,        // 1:1 ratio
     beOffsetPips: 0.0,          // En la entrada exacta
+    trendMode: 'ANY_BREAKOUT',  // Permite operar rupturas de sesión de alta probabilidad
   });
 
   // Daily Risk Tracker for Kill Switch (2 SL / 2 TP)
@@ -224,7 +225,7 @@ export default function App() {
   }, [allDays, selectedDate]);
 
   // Evaluate strategy with current parameters on selected day
-  const { asianRange, trade } = useMemo(() => {
+  const { asianRange, trade, trades } = useMemo(() => {
     return evaluateStrategyDay(selectedDay.candles, selectedDay.prevDayTrend, params);
   }, [selectedDay, params]);
 
@@ -494,21 +495,23 @@ export default function App() {
 
     allDays.forEach((day) => {
       const res = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
-      if (res.trade) {
-        totalTrades++;
-        if (res.trade.status === 'HIT_TP') {
-          wins++;
-          totalPips += res.trade.pnlPips || 0;
-          totalProfitUSD += res.trade.pnlUSD || 0;
-        } else if (res.trade.status === 'HIT_SL') {
-          losses++;
-          totalPips += res.trade.pnlPips || 0;
-          totalProfitUSD += res.trade.pnlUSD || 0;
-        } else if (res.trade.status === 'BREAKEVEN') {
-          breakevens++;
-          totalPips += res.trade.pnlPips || 0;
-          totalProfitUSD += res.trade.pnlUSD || 0;
-        }
+      if (res.trades && res.trades.length > 0) {
+        res.trades.forEach((t) => {
+          totalTrades++;
+          if (t.status === 'HIT_TP') {
+            wins++;
+            totalPips += t.pnlPips || 0;
+            totalProfitUSD += t.pnlUSD || 0;
+          } else if (t.status === 'HIT_SL') {
+            losses++;
+            totalPips += t.pnlPips || 0;
+            totalProfitUSD += t.pnlUSD || 0;
+          } else if (t.status === 'BREAKEVEN') {
+            breakevens++;
+            totalPips += t.pnlPips || 0;
+            totalProfitUSD += t.pnlUSD || 0;
+          }
+        });
       }
     });
 
@@ -707,6 +710,7 @@ export default function App() {
           selectedDay={selectedDay}
           asianRange={asianRange}
           trade={trade}
+          trades={trades}
           params={params}
           onUpdateParams={(newParams) => setParams((p) => ({ ...p, ...newParams }))}
           isLiveTickerActive={isLiveTickerActive}

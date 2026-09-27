@@ -29,33 +29,9 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
     ? allDays.filter((d) => d.date.startsWith('2026-08'))
     : allDays.filter((d) => d.date.startsWith('2026-07'));
 
-  // Process days into structured journal entries
-  const journalEntries = targetDays.map((day) => {
-    const { asianRange, trade } = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
-
-    let outcomeText = 'SIN OPERACIÓN';
-    let outcomeClass = 'text-slate-400 bg-slate-800';
-    let pnlUSD = 0;
-    let pnlPct = 0;
-
-    if (trade) {
-      if (trade.status === 'HIT_TP') {
-        outcomeText = 'WIN (TP 1:2)';
-        outcomeClass = 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/30';
-        pnlUSD = trade.pnlUSD || 100;
-        pnlPct = (pnlUSD / params.accountBalance) * 100;
-      } else if (trade.status === 'HIT_SL') {
-        outcomeText = 'LOSS (SL 1.0R)';
-        outcomeClass = 'text-rose-400 bg-rose-500/10 border border-rose-500/30';
-        pnlUSD = trade.pnlUSD || -50;
-        pnlPct = (pnlUSD / params.accountBalance) * 100;
-      } else if (trade.status === 'BREAKEVEN' || trade.isBreakevenTriggered) {
-        outcomeText = 'BREAKEVEN ($0)';
-        outcomeClass = 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30';
-        pnlUSD = 0;
-        pnlPct = 0;
-      }
-    }
+  // Process days into structured journal entries (supports multiple trades per day)
+  const journalEntries = targetDays.flatMap((day) => {
+    const { asianRange, trades } = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
 
     // Asian Range Volatility Evaluation
     const pts = asianRange?.rangePoints || 0;
@@ -63,23 +39,65 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
     if (pts < 6.0) volatilityStatus = 'Comprimido (<6 pts)';
     else if (pts > 22.0) volatilityStatus = 'Expandido (>22 pts)';
 
-    return {
-      date: day.date,
-      d1Trend: day.prevDayTrend,
-      asianRangePoints: pts.toFixed(2),
-      volatilityStatus,
-      tradeType: trade ? trade.type : '-',
-      triggerTime: trade ? trade.time : '-',
-      entry: trade ? trade.entryPrice.toFixed(2) : '-',
-      sl: trade ? trade.slPrice.toFixed(2) : '-',
-      tp: trade ? trade.tpPrice.toFixed(2) : '-',
-      lots: trade ? trade.lotSize : '-',
-      outcomeText,
-      outcomeClass,
-      pnlUSD,
-      pnlPct,
-      breakevenProtected: trade?.isBreakevenTriggered ? 'Sí (1:1)' : 'No',
-    };
+    if (trades.length === 0) {
+      return [
+        {
+          date: day.date,
+          tradeNum: '-',
+          d1Trend: day.prevDayTrend,
+          asianRangePoints: pts.toFixed(2),
+          volatilityStatus,
+          tradeType: '-',
+          triggerTime: '-',
+          entry: '-',
+          sl: '-',
+          tp: '-',
+          lots: '-',
+          outcomeText: 'SIN OPERACIÓN',
+          outcomeClass: 'text-slate-400 bg-slate-800',
+          pnlUSD: 0,
+          pnlPct: 0,
+          breakevenProtected: 'No',
+        },
+      ];
+    }
+
+    return trades.map((t, idx) => {
+      let outcomeText = 'ACTIVO';
+      let outcomeClass = 'text-blue-400 bg-blue-500/10 border border-blue-500/30';
+      let pnlUSD = t.pnlUSD || 0;
+      let pnlPct = (pnlUSD / params.accountBalance) * 100;
+
+      if (t.status === 'HIT_TP') {
+        outcomeText = `WIN (TP 1:${params.rrRatio})`;
+        outcomeClass = 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/30';
+      } else if (t.status === 'HIT_SL') {
+        outcomeText = 'LOSS (SL 1.0R)';
+        outcomeClass = 'text-rose-400 bg-rose-500/10 border border-rose-500/30';
+      } else if (t.status === 'BREAKEVEN' || t.isBreakevenTriggered) {
+        outcomeText = 'BREAKEVEN ($0)';
+        outcomeClass = 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30';
+      }
+
+      return {
+        date: day.date,
+        tradeNum: trades.length > 1 ? `#${idx + 1} (${idx === 0 ? 'Ruptura' : 'Retesteo'})` : '#1',
+        d1Trend: day.prevDayTrend,
+        asianRangePoints: pts.toFixed(2),
+        volatilityStatus,
+        tradeType: t.type,
+        triggerTime: t.time,
+        entry: t.entryPrice.toFixed(2),
+        sl: t.slPrice.toFixed(2),
+        tp: t.tpPrice.toFixed(2),
+        lots: t.lotSize.toString(),
+        outcomeText,
+        outcomeClass,
+        pnlUSD,
+        pnlPct,
+        breakevenProtected: t.isBreakevenTriggered ? 'Sí (1:1)' : 'No',
+      };
+    });
   });
 
   // Calculate totals
@@ -94,6 +112,7 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
   const handleExportCSV = () => {
     const headers = [
       'Fecha',
+      'Operacion',
       'Tendencia_D1',
       'Rango_Asia_Pts',
       'Estado_Volatilidad_Asia',
@@ -111,6 +130,7 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
 
     const rows = journalEntries.map((e) => [
       e.date,
+      `"${e.tradeNum}"`,
       e.d1Trend,
       e.asianRangePoints,
       `"${e.volatilityStatus}"`,
@@ -264,6 +284,7 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
               <thead className="bg-slate-900/80 text-slate-400 uppercase text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="py-2.5 px-3">Fecha</th>
+                  <th className="py-2.5 px-3">Op. #</th>
                   <th className="py-2.5 px-3">Filtro D1</th>
                   <th className="py-2.5 px-3">Rango Asia</th>
                   <th className="py-2.5 px-3">Tipo</th>
@@ -277,9 +298,10 @@ export const TradingJournalModal: React.FC<TradingJournalModalProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                {journalEntries.map((j) => (
-                  <tr key={j.date} className="hover:bg-slate-900/40 transition">
+                {journalEntries.map((j, idx) => (
+                  <tr key={`${j.date}-${j.tradeNum}-${idx}`} className="hover:bg-slate-900/40 transition">
                     <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">{j.date}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-amber-300 font-semibold">{j.tradeNum}</td>
                     <td className="py-2.5 px-3">
                       <span className={j.d1Trend === 'BULLISH' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
                         {j.d1Trend === 'BULLISH' ? 'Alcista' : 'Bajista'}

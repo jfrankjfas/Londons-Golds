@@ -32,6 +32,7 @@ interface StrategyStatusCardProps {
   selectedDay: DayData;
   asianRange: AsianRange | null;
   trade: TradeSignal | null;
+  trades?: TradeSignal[];
   params: StrategyParameters;
   onUpdateParams: (newParams: Partial<StrategyParameters>) => void;
   isLiveTickerActive: boolean;
@@ -53,6 +54,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
   selectedDay,
   asianRange,
   trade,
+  trades = [],
   params,
   onUpdateParams,
   isLiveTickerActive,
@@ -93,29 +95,79 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
     return allDays;
   }, [allDays, selectedMonth]);
 
-  // Pre-calculate evaluation for each day for instant badges & statistics
+  // Pre-calculate evaluation for each day for instant badges & statistics (supports multiple trades per day)
   const dayEvaluations = useMemo(() => {
-    const map = new Map<string, { status: string; pnlR: number; pnlUSD: number; isBreakeven: boolean }>();
-    allDays.forEach((d) => {
-      const { trade: evaluatedTrade } = evaluateStrategyDay(d.candles, d.prevDayTrend, params);
-      if (!evaluatedTrade) {
-        map.set(d.date, { status: 'NO_TRADE', pnlR: 0, pnlUSD: 0, isBreakeven: false });
-      } else if (evaluatedTrade.status === 'HIT_TP') {
-        map.set(d.date, { status: 'WIN', pnlR: params.rrRatio, pnlUSD: evaluatedTrade.pnlUSD || 100, isBreakeven: false });
-      } else if (evaluatedTrade.status === 'HIT_SL') {
-        map.set(d.date, { status: 'LOSS', pnlR: -1, pnlUSD: evaluatedTrade.pnlUSD || -50, isBreakeven: false });
-      } else if (evaluatedTrade.status === 'BREAKEVEN' || evaluatedTrade.isBreakevenTriggered) {
-        map.set(d.date, { status: 'BE', pnlR: 0, pnlUSD: 0, isBreakeven: true });
-      } else {
-        map.set(d.date, { status: 'ACTIVE', pnlR: 0, pnlUSD: 0, isBreakeven: false });
+    const map = new Map<
+      string,
+      {
+        status: 'WIN' | 'LOSS' | 'BE' | 'MIXED' | 'NO_TRADE' | 'ACTIVE';
+        trades: TradeSignal[];
+        pnlUSD: number;
+        pnlR: number;
+        wins: number;
+        losses: number;
+        breakevens: number;
       }
+    >();
+
+    allDays.forEach((d) => {
+      const { trades: evaluatedTrades } = evaluateStrategyDay(d.candles, d.prevDayTrend, params);
+      if (!evaluatedTrades || evaluatedTrades.length === 0) {
+        map.set(d.date, {
+          status: 'NO_TRADE',
+          trades: [],
+          pnlUSD: 0,
+          pnlR: 0,
+          wins: 0,
+          losses: 0,
+          breakevens: 0,
+        });
+        return;
+      }
+
+      let pnlUSD = 0;
+      let pnlR = 0;
+      let wins = 0;
+      let losses = 0;
+      let breakevens = 0;
+
+      evaluatedTrades.forEach((t) => {
+        if (t.status === 'HIT_TP') {
+          wins++;
+          pnlUSD += t.pnlUSD || 100;
+          pnlR += params.rrRatio;
+        } else if (t.status === 'HIT_SL') {
+          losses++;
+          pnlUSD += t.pnlUSD || -50;
+          pnlR -= 1;
+        } else if (t.status === 'BREAKEVEN' || t.isBreakevenTriggered) {
+          breakevens++;
+        }
+      });
+
+      let status: 'WIN' | 'LOSS' | 'BE' | 'MIXED' | 'ACTIVE' = 'ACTIVE';
+      if (wins > 0 && losses === 0) status = 'WIN';
+      else if (losses > 0 && wins === 0) status = 'LOSS';
+      else if (breakevens > 0 && wins === 0 && losses === 0) status = 'BE';
+      else if (wins > 0 && losses > 0) status = 'MIXED';
+
+      map.set(d.date, {
+        status,
+        trades: evaluatedTrades,
+        pnlUSD: parseFloat(pnlUSD.toFixed(2)),
+        pnlR: parseFloat(pnlR.toFixed(1)),
+        wins,
+        losses,
+        breakevens,
+      });
     });
     return map;
   }, [allDays, params]);
 
-  // Aggregate metrics for filteredDays
+  // Aggregate metrics for filteredDays (aggregates all individual trades)
   const backtestMetrics = useMemo(() => {
     let totalTrades = 0;
+    let daysWithTrade = 0;
     let wins = 0;
     let losses = 0;
     let breakevens = 0;
@@ -130,36 +182,43 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
     filteredDays.forEach((d) => {
       const ev = dayEvaluations.get(d.date);
       if (!ev) return;
-      if (ev.status === 'WIN') {
-        totalTrades++;
-        wins++;
-        totalPnLUSD += ev.pnlUSD;
-        totalR += ev.pnlR;
-        grossWinsUSD += ev.pnlUSD;
-        currentEquity += ev.pnlUSD;
-      } else if (ev.status === 'LOSS') {
-        totalTrades++;
-        losses++;
-        totalPnLUSD += ev.pnlUSD;
-        totalR += ev.pnlR;
-        grossLossesUSD += Math.abs(ev.pnlUSD);
-        currentEquity += ev.pnlUSD;
-      } else if (ev.status === 'BE') {
-        totalTrades++;
-        breakevens++;
-      }
+      if (ev.trades.length > 0) daysWithTrade++;
+      totalTrades += ev.trades.length;
+      wins += ev.wins;
+      losses += ev.losses;
+      breakevens += ev.breakevens;
+      totalPnLUSD += ev.pnlUSD;
+      totalR += ev.pnlR;
+
+      ev.trades.forEach((t) => {
+        if (t.status === 'HIT_TP') {
+          grossWinsUSD += t.pnlUSD || 100;
+        } else if (t.status === 'HIT_SL') {
+          grossLossesUSD += Math.abs(t.pnlUSD || 50);
+        }
+      });
+
+      currentEquity += ev.pnlUSD;
       if (currentEquity > peakEquity) peakEquity = currentEquity;
       const dd = peakEquity - currentEquity;
       if (dd > maxDrawdownUSD) maxDrawdownUSD = dd;
     });
 
     const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
-    const profitFactor = grossLossesUSD > 0 ? (grossWinsUSD / grossLossesUSD).toFixed(2) : (grossWinsUSD > 0 ? '99.9' : '0.0');
-    const maxDrawdownPct = params.accountBalance > 0 ? ((maxDrawdownUSD / params.accountBalance) * 100).toFixed(1) : '0';
-    const totalReturnPct = params.accountBalance > 0 ? ((totalPnLUSD / params.accountBalance) * 100).toFixed(1) : '0';
+    const profitFactor =
+      grossLossesUSD > 0
+        ? (grossWinsUSD / grossLossesUSD).toFixed(2)
+        : grossWinsUSD > 0
+        ? '99.9'
+        : '0.0';
+    const maxDrawdownPct =
+      params.accountBalance > 0 ? ((maxDrawdownUSD / params.accountBalance) * 100).toFixed(1) : '0';
+    const totalReturnPct =
+      params.accountBalance > 0 ? ((totalPnLUSD / params.accountBalance) * 100).toFixed(1) : '0';
 
     return {
       totalDays: filteredDays.length,
+      daysWithTrade,
       totalTrades,
       wins,
       losses,
@@ -168,10 +227,11 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
       profitFactor,
       totalPnLUSD: parseFloat(totalPnLUSD.toFixed(2)),
       totalR: parseFloat(totalR.toFixed(1)),
+      maxDrawdownUSD: parseFloat(maxDrawdownUSD.toFixed(2)),
       maxDrawdownPct,
       totalReturnPct,
     };
-  }, [filteredDays, dayEvaluations, params.accountBalance]);
+  }, [filteredDays, dayEvaluations, params]);
 
   // Automated batch backtesting runner simulation
   const handleRunFullBacktest = () => {
@@ -439,58 +499,66 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
             )}
           </div>
 
-          {/* Regla 2: Filtro Quanti D1 */}
+          {/* Regla 2: Filtro Quanti D1 y Dirección */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-purple-400 flex items-center gap-1.5">
                 {isBullishD1 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                2. Filtro Tendencia D1
+                2. Modo de Ruptura
               </span>
-              <span
-                className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
-                  isBullishD1
-                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                    : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                }`}
+              <select
+                value={params.trendMode || 'ANY_BREAKOUT'}
+                onChange={(e) => onUpdateParams({ trendMode: e.target.value as 'ANY_BREAKOUT' | 'D1_STRICT' })}
+                className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-purple-300 rounded px-1.5 py-0.5 cursor-pointer font-bold"
               >
-                {isBullishD1 ? 'SOLO COMPRAS (LONG)' : 'SOLO VENTAS (SHORT)'}
-              </span>
+                <option value="ANY_BREAKOUT">Ambas Direcciones (Alta Frecuencia)</option>
+                <option value="D1_STRICT">Filtro D1 Estricto</option>
+              </select>
             </div>
             <div className="space-y-1 text-xs font-mono">
               <div className="flex justify-between text-slate-300">
-                <span className="text-slate-400">Cierre D1 Anterior:</span>
-                <span className="font-bold text-white">${selectedDay.prevDayClose.toFixed(2)}</span>
+                <span className="text-slate-400">Sesgo de Hoy:</span>
+                <span className={isBullishD1 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                  {params.trendMode === 'D1_STRICT'
+                    ? isBullishD1 ? 'Solo Longs (D1 Alcista)' : 'Solo Shorts (D1 Bajista)'
+                    : 'Cualquier Ruptura Válida (M15)'}
+                </span>
               </div>
               <div className="flex justify-between text-slate-300">
-                <span className="text-slate-400">Apertura D1 Anterior:</span>
-                <span className="text-slate-400">${selectedDay.prevDayOpen.toFixed(2)}</span>
+                <span className="text-slate-400">Vela D1 Anterior:</span>
+                <span className="text-white">${selectedDay.prevDayOpen.toFixed(1)} → ${selectedDay.prevDayClose.toFixed(1)}</span>
               </div>
               <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
-                <span className="text-slate-400">Sesgo Estadístico:</span>
-                <span className={isBullishD1 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
-                  {isBullishD1 ? 'Continuación Alcista' : 'Continuación Bajista'}
+                <span className="text-slate-400">Confirmación:</span>
+                <span className="text-cyan-300 font-semibold">
+                  {params.trendMode === 'D1_STRICT' ? 'Alineada con Cierre Diario' : 'Expansión de Rango Asiático'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Regla 3: Gatillo M15 Londres */}
+          {/* Regla 3: Gatillo M15 Londres & Operaciones Permitidas */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1.5">
-                <Flame className="w-3.5 h-3.5" /> 3. Gatillo Londres
+                <Flame className="w-3.5 h-3.5" /> 3. Gatillo & Trades/Día
               </span>
-              <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                08:00 - 11:00 UTC
-              </span>
+              <select
+                value={params.maxTradesPerDay ?? 2}
+                onChange={(e) => onUpdateParams({ maxTradesPerDay: parseInt(e.target.value) })}
+                className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-emerald-300 rounded px-1.5 py-0.5 cursor-pointer font-bold"
+              >
+                <option value={1}>Máx 1 Trade / Día</option>
+                <option value={2}>Hasta 2 Trades (Ruptura + Retesteo)</option>
+              </select>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed font-sans">
-              Espera el cierre con <strong className="text-white font-semibold">CUERPO</strong> en M15 por fuera del rango a favor del filtro D1.
+              Cierre con <strong className="text-white font-semibold">CUERPO</strong> en M15 fuera de Asia. Si Trade #1 sale en TP/BE, permite retesteo.
             </p>
             <div className="mt-2 text-xs font-mono flex items-center justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">Nivel de disparo:</span>
+              <span className="text-slate-400">Ventana Operativa:</span>
               <span className="text-amber-300 font-bold">
-                {isBullishD1 ? `> $${asianRange?.high.toFixed(2)}` : `< $${asianRange?.low.toFixed(2)}`}
+                08:00 - 11:00 UTC (Londres)
               </span>
             </div>
           </div>
@@ -857,172 +925,196 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
         </div>
       </div>
 
-      {/* ACTIVE TRADE CARD (If Trade exists for this day) */}
-      {trade ? (
-        <div
-          id="active-trade-card"
-          className={`border rounded-xl p-4 shadow-md transition-all ${
-            trade.status === 'HIT_TP'
-              ? 'bg-emerald-950/30 border-emerald-500/40'
-              : trade.status === 'HIT_SL'
-              ? 'bg-rose-950/30 border-rose-500/40'
-              : trade.status === 'BREAKEVEN' || trade.isBreakevenTriggered
-              ? 'bg-cyan-950/30 border-cyan-500/40'
-              : 'bg-blue-950/30 border-blue-500/40'
-          }`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <span
-                className={`px-2.5 py-1 rounded-md text-xs font-mono font-bold flex items-center gap-1.5 ${
-                  trade.type === 'LONG'
-                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                    : 'bg-rose-500 text-white shadow-sm'
-                }`}
-              >
-                {trade.type === 'LONG' ? (
-                  <ArrowUpRight className="w-4 h-4" />
-                ) : (
-                  <ArrowDownRight className="w-4 h-4" />
-                )}
-                {trade.type === 'LONG' ? 'COMPRA (BUY BREAKOUT)' : 'VENTA (SELL BREAKOUT)'}
-              </span>
-
-              <span className="text-xs font-mono text-slate-300">
-                Ejecutado a las <strong className="text-white">{trade.time} UTC</strong>
-              </span>
+      {/* ACTIVE TRADE CARDS (Renders all executed trades for the day) */}
+      {(() => {
+        const activeTradesList = trades && trades.length > 0 ? trades : trade ? [trade] : [];
+        if (activeTradesList.length === 0) {
+          return (
+            /* FILTRO DE DISCIPLINA (Cuando el día no presenta ruptura válida) */
+            <div className="border border-slate-800 bg-slate-900/50 rounded-xl p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0 mt-0.5">
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-white font-sans">
+                      Filtro de Disciplina Activo: Preservación de Capital
+                    </h4>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      Sin Operación (0% Pérdida)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 font-sans leading-relaxed">
+                    En esta sesión ({selectedDay.date}), el precio osciló dentro del rango asiático (${asianRange?.low.toFixed(2)} - ${asianRange?.high.toFixed(2)}) y <strong>no generó ningún cierre con CUERPO de vela M15</strong> fuera del rango durante la ventana de Londres (08:00 - 11:00 UTC).
+                  </p>
+                  <div className="flex items-center gap-4 pt-1 text-[11px] font-mono text-emerald-400">
+                    <span>✓ Regla Anti-Overtrading: Protege de días laterales</span>
+                    <span>•</span>
+                    <span>✓ Cero Comisiones Innecesarias</span>
+                    <span>•</span>
+                    <span>✓ Capital Intacto: 100%</span>
+                  </div>
+                </div>
+              </div>
             </div>
+          );
+        }
 
-            <div className="flex items-center gap-2">
-              {onOpenOrderTicket && (
-                <button
-                  type="button"
-                  onClick={onOpenOrderTicket}
-                  className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-mono font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95"
-                  title="Abrir Ticket de Orden Formateado para MT4/MT5/cTrader"
+        return (
+          <div className="space-y-3">
+            {activeTradesList.map((t, tIdx) => {
+              const tradeLabel =
+                activeTradesList.length > 1
+                  ? tIdx === 0
+                    ? 'Op. #1: Ruptura Inicial Londres'
+                    : 'Op. #2: Retesteo / Continuación'
+                  : 'Operación Cuantitativa';
+
+              return (
+                <div
+                  key={t.id || `trade-${t.time}-${tIdx}`}
+                  id={`active-trade-card-${tIdx}`}
+                  className={`border rounded-xl p-4 shadow-md transition-all ${
+                    t.status === 'HIT_TP'
+                      ? 'bg-emerald-950/30 border-emerald-500/40'
+                      : t.status === 'HIT_SL'
+                      ? 'bg-rose-950/30 border-rose-500/40'
+                      : t.status === 'BREAKEVEN' || t.isBreakevenTriggered
+                      ? 'bg-cyan-950/30 border-cyan-500/40'
+                      : 'bg-blue-950/30 border-blue-500/40'
+                  }`}
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Ticket MT4/MT5</span>
-                </button>
-              )}
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700">
+                        {tradeLabel}
+                      </span>
+                      <span
+                        className={`px-2.5 py-1 rounded-md text-xs font-mono font-bold flex items-center gap-1.5 ${
+                          t.type === 'LONG'
+                            ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                            : 'bg-rose-500 text-white shadow-sm'
+                        }`}
+                      >
+                        {t.type === 'LONG' ? (
+                          <ArrowUpRight className="w-4 h-4" />
+                        ) : (
+                          <ArrowDownRight className="w-4 h-4" />
+                        )}
+                        {t.type === 'LONG' ? 'COMPRA (BUY BREAKOUT)' : 'VENTA (SELL BREAKOUT)'}
+                      </span>
 
-              <span
-                className={`text-xs font-mono font-bold px-2.5 py-1 rounded border uppercase ${
-                  trade.status === 'HIT_TP'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    : trade.status === 'HIT_SL'
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                    : trade.status === 'BREAKEVEN'
-                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                    : trade.isBreakevenTriggered
-                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
-                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
-                }`}
-              >
-                {trade.status === 'HIT_TP'
-                  ? '✓ TAKE PROFIT ALCANZADO (+2.0R)'
-                  : trade.status === 'HIT_SL'
-                  ? '✗ STOP LOSS EJECUTADO (-1.0R)'
-                  : trade.status === 'BREAKEVEN'
-                  ? '🛡️ CERRADO EN BREAKEVEN ($0 PÉRDIDA)'
-                  : trade.isBreakevenTriggered
-                  ? '🛡️ BREAKEVEN ACTIVADO (SL EN ENTRADA)'
-                  : '● POSICIÓN ACTIVA EN MERCADO'}
-              </span>
-            </div>
+                      <span className="text-xs font-mono text-slate-300">
+                        Ejecutado a las <strong className="text-white">{t.time} UTC</strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {onOpenOrderTicket && (
+                        <button
+                          type="button"
+                          onClick={onOpenOrderTicket}
+                          className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-mono font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95"
+                          title="Abrir Ticket de Orden Formateado para MT4/MT5/cTrader"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Ticket MT4/MT5</span>
+                        </button>
+                      )}
+
+                      <span
+                        className={`text-xs font-mono font-bold px-2.5 py-1 rounded border uppercase ${
+                          t.status === 'HIT_TP'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : t.status === 'HIT_SL'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                            : t.status === 'BREAKEVEN'
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                            : t.isBreakevenTriggered
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                        }`}
+                      >
+                        {t.status === 'HIT_TP'
+                          ? `✓ TAKE PROFIT ALCANZADO (+${params.rrRatio}.0R)`
+                          : t.status === 'HIT_SL'
+                          ? '✗ STOP LOSS EJECUTADO (-1.0R)'
+                          : t.status === 'BREAKEVEN'
+                          ? '🛡️ CERRADO EN BREAKEVEN ($0 PÉRDIDA)'
+                          : t.isBreakevenTriggered
+                          ? '🛡️ BREAKEVEN ACTIVADO (SL EN ENTRADA)'
+                          : '● POSICIÓN ACTIVA EN MERCADO'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {t.isBreakevenTriggered && (
+                    <div className="mb-3 p-2 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 text-xs font-mono flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                      <span>
+                        <strong>Protección 1:1 Ejecutada:</strong> El precio alcanzó el ratio 1:1 y el Stop Loss fue movido al punto de entrada (${t.entryPrice.toFixed(2)}). Riesgo de pérdida reducido al 0%.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 text-xs font-mono">
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">Precio Entrada</span>
+                      <span className="text-white font-bold text-sm">${t.entryPrice.toFixed(2)}</span>
+                    </div>
+
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">
+                        {t.isBreakevenTriggered ? 'Stop en Breakeven' : 'Stop Loss (SL)'}
+                      </span>
+                      <span
+                        className={`font-bold text-sm ${
+                          t.isBreakevenTriggered ? 'text-cyan-400' : 'text-rose-400'
+                        }`}
+                      >
+                        ${t.slPrice.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">Take Profit (1:{params.rrRatio})</span>
+                      <span className="text-emerald-400 font-bold text-sm">${t.tpPrice.toFixed(2)}</span>
+                    </div>
+
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">Lotes XAUUSD</span>
+                      <span className="text-amber-300 font-bold text-sm">{t.lotSize} Lotes</span>
+                    </div>
+
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">Riesgo Inicial</span>
+                      <span className="text-rose-400 font-bold text-sm">-${t.riskAmountUSD.toFixed(2)} USD</span>
+                    </div>
+
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[10px] uppercase block">Resultado PnL</span>
+                      <span
+                        className={`font-bold text-sm ${
+                          (t.pnlUSD || 0) > 0
+                            ? 'text-emerald-400'
+                            : (t.pnlUSD || 0) === 0
+                            ? 'text-cyan-400'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {t.pnlUSD !== undefined
+                          ? `${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD.toFixed(2)} USD`
+                          : 'En curso...'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-
-          {trade.isBreakevenTriggered && (
-            <div className="mb-3 p-2 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 text-xs font-mono flex items-center gap-2">
-              <Zap className="w-4 h-4 text-cyan-400 flex-shrink-0" />
-              <span>
-                <strong>Protección 1:1 Ejecutada:</strong> El precio alcanzó el ratio 1:1 y el Stop Loss fue movido al punto de entrada (${trade.entryPrice.toFixed(2)}). Riesgo de pérdida reducido al 0%.
-              </span>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 text-xs font-mono">
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">Precio Entrada</span>
-              <span className="text-white font-bold text-sm">${trade.entryPrice.toFixed(2)}</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">
-                {trade.isBreakevenTriggered ? 'Stop en Breakeven' : 'Stop Loss (SL)'}
-              </span>
-              <span
-                className={`font-bold text-sm ${
-                  trade.isBreakevenTriggered ? 'text-cyan-400' : 'text-rose-400'
-                }`}
-              >
-                ${trade.slPrice.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">Take Profit (1:2)</span>
-              <span className="text-emerald-400 font-bold text-sm">${trade.tpPrice.toFixed(2)}</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">Lotes XAUUSD</span>
-              <span className="text-amber-300 font-bold text-sm">{trade.lotSize} Lotes</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">Riesgo Inicial</span>
-              <span className="text-rose-400 font-bold text-sm">-${trade.riskAmountUSD.toFixed(2)} USD</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
-              <span className="text-slate-400 text-[10px] uppercase block">Resultado PnL</span>
-              <span
-                className={`font-bold text-sm ${
-                  (trade.pnlUSD || 0) > 0
-                    ? 'text-emerald-400'
-                    : (trade.pnlUSD || 0) === 0
-                    ? 'text-cyan-400'
-                    : 'text-rose-400'
-                }`}
-              >
-                {trade.pnlUSD !== undefined
-                  ? `${trade.pnlUSD >= 0 ? '+' : ''}$${trade.pnlUSD.toFixed(2)} USD`
-                  : 'En curso...'}
-              </span>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* FILTRO DE DISCIPLINA (Cuando el día no presenta ruptura válida) */
-        <div className="border border-slate-800 bg-slate-900/50 rounded-xl p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0 mt-0.5">
-              <AlertCircle className="w-4 h-4" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-bold text-white font-sans">
-                  Filtro de Disciplina Activo: Preservación de Capital
-                </h4>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  Sin Operación (0% Pérdida)
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 font-sans leading-relaxed">
-                En esta sesión ({selectedDay.date}), el precio osciló dentro del rango asiático (${asianRange?.low.toFixed(2)} - ${asianRange?.high.toFixed(2)}) y <strong>no generó ningún cierre con CUERPO de vela M15</strong> fuera del rango durante la ventana de Londres (08:00 - 11:00 UTC).
-              </p>
-              <div className="flex items-center gap-4 pt-1 text-[11px] font-mono text-emerald-400">
-                <span>✓ Regla Anti-Overtrading: Protege de días laterales</span>
-                <span>•</span>
-                <span>✓ Cero Comisiones Innecesarias</span>
-                <span>•</span>
-                <span>✓ Capital Intacto: 100%</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

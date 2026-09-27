@@ -39,174 +39,244 @@ export function generateDayM15Candles(
       const isLondonOpen = h >= 8 && h <= 11;
 
       if (profile === 'BULLISH_BREAKOUT_WIN') {
-        // Asian Range: [baseOpen - 3.5, baseOpen + 5.8] (~9.3 pts)
         if (isAsia) {
-          const oscillation = Math.sin((h * 4 + m / 15) * 0.5) * 3.8;
-          close = baseOpen + oscillation + (Math.random() - 0.5) * 1.2;
-          high = Math.min(baseOpen + 5.8, Math.max(open, close) + Math.random() * 1.0);
-          low = Math.max(baseOpen - 3.4, Math.min(open, close) - Math.random() * 1.0);
-          volume = Math.floor(400 + Math.random() * 350);
+          // Asian Range: strictly between [baseOpen - 3.5, baseOpen + 3.8] (~7.3 pts)
+          const osc = Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
+          close = baseOpen + osc;
+          high = Math.min(baseOpen + 3.8, Math.max(open, close) + 0.5);
+          low = Math.max(baseOpen - 3.5, Math.min(open, close) - 0.5);
+          volume = 450;
         } else if (isPreLondon) {
-          close = baseOpen + 4.5 + (m / 60) * 1.2;
-          high = close + 0.6;
-          low = open - 0.5;
-          volume = Math.floor(850 + Math.random() * 400);
+          // Pre-London: stays strictly inside range [baseOpen + 0.8, baseOpen + 2.8]
+          close = baseOpen + 1.2 + (m / 60) * 1.0;
+          high = Math.min(baseOpen + 3.2, close + 0.4);
+          low = close - 0.4;
+          volume = 850;
+        } else if (h === 8 && m === 0) {
+          // London Open 08:00 UTC: inside range
+          open = baseOpen + 2.2;
+          close = baseOpen + 3.2;
+          high = baseOpen + 3.5;
+          low = baseOpen + 1.8;
+          volume = 1600;
         } else if (h === 8 && m === 15) {
-          // GATILLO: Ruptura alcista institucional a las 08:15 UTC (cierra por encima de baseOpen + 5.8)
-          open = baseOpen + 5.5;
-          close = baseOpen + 8.8; // Cierra con CUERPO sólido por encima del rango asiático
-          high = baseOpen + 9.4;
-          low = baseOpen + 5.2;
-          volume = 3600; // Alto volumen institucional
-        } else if (isLondonOpen) {
-          const step = (h - 8) * 4 + m / 15;
-          close = baseOpen + 8.5 + step * 1.4 + (Math.random() - 0.3) * 1.2;
-          high = Math.max(open, close) + Math.random() * 1.4;
-          low = Math.min(open, close) - Math.random() * 0.6;
-          volume = Math.floor(1800 + Math.random() * 1100);
+          // BREAKOUT 1: Institutional breakout above Asian High of +3.8
+          open = baseOpen + 3.2;
+          close = baseOpen + 7.8;
+          high = baseOpen + 8.2;
+          low = baseOpen + 3.0;
+          volume = 3800;
+        } else if (h === 8 && m === 30) {
+          open = baseOpen + 7.8;
+          close = baseOpen + 13.0;
+          high = baseOpen + 13.5;
+          low = baseOpen + 7.5;
+          volume = 2800;
+        } else if (h === 8 && m === 45) {
+          open = baseOpen + 13.0;
+          close = baseOpen + 18.5; // Exceeds 1:1 -> Breakeven activated
+          high = baseOpen + 19.0;
+          low = baseOpen + 12.8;
+          volume = 2400;
+        } else if (h === 9 && m === 0) {
+          open = baseOpen + 18.5;
+          close = baseOpen + 24.0; // TP 1 hit at 23.2!
+          high = baseOpen + 24.5;
+          low = baseOpen + 18.0;
+          volume = 2200;
+        } else if (h === 9 && m === 15) {
+          // Pullback / consolidation
+          open = baseOpen + 24.0;
+          close = baseOpen + 21.5;
+          high = baseOpen + 24.2;
+          low = baseOpen + 21.0;
+          volume = 1400;
+        } else if (h === 9 && m === 30) {
+          // Trade 2: Continuation impulse breaking higher
+          open = baseOpen + 21.5;
+          close = baseOpen + 25.5;
+          high = baseOpen + 26.0;
+          low = baseOpen + 21.2;
+          volume = 3200;
+        } else if (h >= 10 && h <= 12) {
+          const step = (h - 10) * 4 + m / 15;
+          close = baseOpen + 25.5 + step * 2.2;
+          high = close + 1.0;
+          low = open - 0.3;
+          volume = 1800;
         } else {
-          // Consolidación de tarde
-          close = open + (Math.random() - 0.4) * 1.2;
-          high = Math.max(open, close) + 1.0;
-          low = Math.min(open, close) - 1.0;
+          close = baseOpen + 38.0;
+          high = close + 0.8;
+          low = close - 0.8;
         }
       } else if (profile === 'BEARISH_BREAKOUT_WIN') {
-        // Asian Range: [baseOpen - 5.8, baseOpen + 4.5] (~10.3 pts)
         if (isAsia) {
-          const oscillation = Math.cos((h * 4 + m / 15) * 0.4) * 4.0;
-          close = baseOpen + oscillation + (Math.random() - 0.5) * 1.1;
-          high = Math.min(baseOpen + 4.5, Math.max(open, close) + Math.random() * 0.9);
-          low = Math.max(baseOpen - 5.8, Math.min(open, close) - Math.random() * 0.9);
-          volume = Math.floor(420 + Math.random() * 320);
+          // Asian Range: strictly [baseOpen - 3.8, baseOpen + 3.5] (~7.3 pts)
+          const osc = Math.cos((h * 4 + m / 15) * 0.5) * 2.8;
+          close = baseOpen + osc;
+          high = Math.min(baseOpen + 3.5, Math.max(open, close) + 0.5);
+          low = Math.max(baseOpen - 3.8, Math.min(open, close) - 0.5);
+          volume = 450;
         } else if (isPreLondon) {
-          close = baseOpen - 4.2 - (m / 60) * 1.4;
-          high = open + 0.5;
-          low = close - 0.6;
-          volume = 920;
+          close = baseOpen - 1.2 - (m / 60) * 1.0;
+          high = close + 0.4;
+          low = Math.max(baseOpen - 3.2, close - 0.4);
+          volume = 850;
+        } else if (h === 8 && m === 0) {
+          open = baseOpen - 2.2;
+          close = baseOpen - 3.2;
+          high = baseOpen - 1.8;
+          low = baseOpen - 3.5;
+          volume = 1600;
+        } else if (h === 8 && m === 15) {
+          // BREAKOUT 1: Institutional breakout below Asian Low of -3.8
+          open = baseOpen - 3.2;
+          close = baseOpen - 7.8;
+          high = baseOpen - 3.0;
+          low = baseOpen - 8.2;
+          volume = 3800;
         } else if (h === 8 && m === 30) {
-          // GATILLO: Ruptura bajista a las 08:30 UTC
-          open = baseOpen - 5.2;
-          close = baseOpen - 8.6; // Cierra con CUERPO por debajo de baseOpen - 5.8
-          high = baseOpen - 4.8;
-          low = baseOpen - 9.1;
-          volume = 3850;
-        } else if (isLondonOpen) {
-          const step = (h - 8) * 4 + m / 15;
-          close = baseOpen - 8.5 - step * 1.3 + (Math.random() - 0.5) * 1.1;
-          high = Math.max(open, close) + 0.8;
-          low = Math.min(open, close) - 1.4;
-          volume = Math.floor(1900 + Math.random() * 1000);
+          open = baseOpen - 7.8;
+          close = baseOpen - 13.0;
+          high = baseOpen - 7.5;
+          low = baseOpen - 13.5;
+          volume = 2800;
+        } else if (h === 8 && m === 45) {
+          open = baseOpen - 13.0;
+          close = baseOpen - 18.5; // Exceeds 1:1 -> Breakeven activated
+          high = baseOpen - 12.8;
+          low = baseOpen - 19.0;
+          volume = 2400;
+        } else if (h === 9 && m === 0) {
+          open = baseOpen - 18.5;
+          close = baseOpen - 24.0; // TP 1 hit!
+          high = baseOpen - 18.0;
+          low = baseOpen - 24.5;
+          volume = 2200;
+        } else if (h === 9 && m === 15) {
+          open = baseOpen - 24.0;
+          close = baseOpen - 21.5;
+          high = baseOpen - 21.0;
+          low = baseOpen - 24.2;
+          volume = 1400;
+        } else if (h === 9 && m === 30) {
+          open = baseOpen - 21.5;
+          close = baseOpen - 25.5; // Trade 2 continuation
+          high = baseOpen - 21.2;
+          low = baseOpen - 26.0;
+          volume = 3200;
+        } else if (h >= 10 && h <= 12) {
+          const step = (h - 10) * 4 + m / 15;
+          close = baseOpen - 25.5 - step * 2.2;
+          high = open + 0.3;
+          low = close - 1.0;
+          volume = 1800;
         } else {
-          close = open + (Math.random() - 0.5) * 1.1;
-          high = Math.max(open, close) + 0.9;
-          low = Math.min(open, close) - 0.9;
+          close = baseOpen - 38.0;
+          high = close + 0.8;
+          low = close - 0.8;
         }
       } else if (profile === 'BREAKEVEN') {
-        // Trade avanza a 1:1, activa Breakeven (SL a Entrada), y luego retrocede al punto de entrada
         if (isAsia) {
-          const oscillation = Math.sin((h * 4 + m / 15) * 0.5) * 3.5;
-          close = baseOpen + oscillation;
-          high = Math.min(baseOpen + 5.0, Math.max(open, close) + 0.8);
-          low = Math.max(baseOpen - 4.0, Math.min(open, close) - 0.8);
+          close = baseOpen + Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
+          high = Math.min(baseOpen + 3.8, Math.max(open, close) + 0.5);
+          low = Math.max(baseOpen - 3.8, Math.min(open, close) - 0.5);
         } else if (isPreLondon) {
-          close = baseOpen + 4.4 + (m / 60) * 1.0;
-          high = close + 0.5;
-          low = open - 0.4;
+          close = baseOpen + 1.5;
+          high = baseOpen + 2.5;
+          low = baseOpen + 0.8;
+        } else if (h === 8 && m === 0) {
+          open = baseOpen + 1.5;
+          close = baseOpen + 2.8;
+          high = baseOpen + 3.2;
+          low = baseOpen + 1.2;
         } else if (h === 8 && m === 15) {
-          // Ruptura alcista a 08:15 UTC (Entry: baseOpen + 8.0, SL ~ baseOpen + 0.5, Risk = 7.5 pts)
-          open = baseOpen + 4.9;
-          close = baseOpen + 8.0;
-          high = baseOpen + 8.5;
-          low = baseOpen + 4.8;
-          volume = 3100;
-        } else if (h === 9 && m === 15) {
-          // Impulso alcanza +16.0 (supera 1:1 Risk Reward -> SL protegido a Entry +0.00)
+          open = baseOpen + 2.8;
+          close = baseOpen + 7.5; // Ruptura
+          high = baseOpen + 8.0;
+          low = baseOpen + 2.5;
+          volume = 3200;
+        } else if (h === 8 && m === 45) {
+          open = baseOpen + 7.5;
+          close = baseOpen + 16.0; // > 1:1 (BE activado)
+          high = baseOpen + 16.5;
+          low = baseOpen + 7.6;
+        } else if (h >= 10 && h <= 11) {
           open = baseOpen + 12.0;
-          close = baseOpen + 16.2;
-          high = baseOpen + 16.8;
-          low = baseOpen + 11.5;
-          volume = 2800;
-        } else if (h >= 11 && h <= 12) {
-          // Fuerte rechazo devuelve el precio al punto de entrada (baseOpen + 8.0), saliendo en Breakeven ($0)
-          close = baseOpen + 7.8;
-          high = Math.max(open, close) + 0.8;
-          low = baseOpen + 7.5;
-          volume = 2100;
+          close = baseOpen + 7.2; // Retroceso a BE
+          high = close + 0.8;
+          low = baseOpen + 6.8;
         } else {
-          close = baseOpen + 6.5 + (Math.random() - 0.5) * 1.5;
-          high = Math.max(open, close) + 0.8;
-          low = Math.min(open, close) - 0.8;
-        }
-      } else if (profile === 'NO_BREAKOUT') {
-        // Rango asiático nunca rompe con cuerpo en Londres
-        if (isAsia) {
-          close = baseOpen + Math.sin((h * 4 + m / 15) * 0.6) * 3.0;
-          high = Math.min(baseOpen + 4.2, Math.max(open, close) + 0.7);
-          low = Math.max(baseOpen - 4.2, Math.min(open, close) - 0.7);
-        } else {
-          if (h === 8 && m === 15) {
-            high = baseOpen + 4.8;
-            close = baseOpen + 3.2; // Mechazo pero cuerpo cierra dentro
-            low = baseOpen + 1.5;
-          } else {
-            close = baseOpen + (Math.random() - 0.5) * 2.8;
-            high = Math.max(open, close) + 0.8;
-            low = Math.min(open, close) - 0.8;
-          }
+          close = baseOpen + 5.0;
+          high = close + 0.8;
+          low = close - 0.8;
         }
       } else if (profile === 'SL_HIT') {
         if (isAsia) {
-          close = baseOpen + Math.sin((h * 4 + m / 15) * 0.5) * 3.2;
-          high = Math.min(baseOpen + 4.5, Math.max(open, close) + 0.7);
-          low = Math.max(baseOpen - 4.5, Math.min(open, close) - 0.7);
+          close = baseOpen + Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
+          high = Math.min(baseOpen + 3.8, Math.max(open, close) + 0.5);
+          low = Math.max(baseOpen - 3.8, Math.min(open, close) - 0.5);
+        } else if (isPreLondon) {
+          close = baseOpen + 1.5;
+          high = baseOpen + 2.5;
+          low = baseOpen + 0.8;
+        } else if (h === 8 && m === 0) {
+          open = baseOpen + 1.5;
+          close = baseOpen + 2.8;
+          high = baseOpen + 3.2;
+          low = baseOpen + 1.2;
         } else if (h === 8 && m === 15) {
-          open = baseOpen - 4.2;
-          close = baseOpen - 6.2; // Ruptura aparente
-          high = baseOpen - 4.0;
-          low = baseOpen - 6.8;
-          volume = 2600;
-        } else if (h >= 9 && h <= 10) {
-          // Giro violento en contra que toca Stop Loss
-          close = baseOpen - 2.0 + (h - 9) * 3.5;
-          high = close + 1.2;
-          low = open - 0.4;
+          open = baseOpen + 2.8;
+          close = baseOpen + 7.2; // Ruptura aparente
+          high = baseOpen + 7.6;
+          low = baseOpen + 2.5;
+          volume = 3100;
+        } else if (h === 8 && m === 30) {
+          open = baseOpen + 7.2;
+          close = baseOpen - 2.0; // Giro violento a SL
+          high = open + 0.5;
+          low = baseOpen - 2.5;
         } else {
-          close = open + (Math.random() - 0.5) * 1.3;
-          high = Math.max(open, close) + 1.0;
-          low = Math.min(open, close) - 1.0;
+          close = baseOpen - 1.0;
+          high = close + 0.8;
+          low = close - 0.8;
         }
+      } else if (profile === 'NO_BREAKOUT') {
+        close = baseOpen + Math.sin((h * 4 + m / 15) * 0.4) * 2.4;
+        high = Math.min(baseOpen + 3.2, close + 0.5);
+        low = Math.max(baseOpen - 3.2, close - 0.5);
       } else {
         // TODAY_ACTIVE: Sesión en vivo de hoy (2026-09-26)
         if (isAsia) {
-          const oscillation = Math.sin((h * 4 + m / 15) * 0.5) * 3.5;
-          close = baseOpen + oscillation;
-          high = Math.min(baseOpen + 4.8, Math.max(open, close) + Math.random() * 0.8);
-          low = Math.max(baseOpen - 4.2, Math.min(open, close) - Math.random() * 0.8);
+          const osc = Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
+          close = baseOpen + osc;
+          high = Math.min(baseOpen + 3.8, Math.max(open, close) + 0.5);
+          low = Math.max(baseOpen - 3.5, Math.min(open, close) - 0.5);
         } else if (h === 7) {
-          close = baseOpen + 1.8 + (m / 60) * 1.2;
-          high = close + 0.7;
-          low = open - 0.4;
+          close = baseOpen + 1.2 + (m / 60) * 1.0;
+          high = Math.min(baseOpen + 3.2, close + 0.4);
+          low = close - 0.4;
         } else if (h === 8 && m === 0) {
-          open = baseOpen + 2.8;
-          close = baseOpen + 3.4;
-          high = baseOpen + 3.8;
-          low = baseOpen + 2.4;
+          open = baseOpen + 2.2;
+          close = baseOpen + 3.2;
+          high = baseOpen + 3.5;
+          low = baseOpen + 1.8;
         } else if (h === 8 && m === 15) {
-          open = baseOpen + 3.5;
-          close = baseOpen + 5.8;
-          high = baseOpen + 6.4;
-          low = baseOpen + 3.2;
+          open = baseOpen + 3.2;
+          close = baseOpen + 7.8;
+          high = baseOpen + 8.2;
+          low = baseOpen + 3.0;
           volume = 3800;
         } else if (h === 8 && m === 30) {
-          open = baseOpen + 5.8;
-          close = baseOpen + 7.6;
-          high = baseOpen + 8.1;
-          low = baseOpen + 5.4;
-          volume = 3200;
+          open = baseOpen + 7.8;
+          close = baseOpen + 13.0;
+          high = baseOpen + 13.5;
+          low = baseOpen + 7.5;
+          volume = 2800;
         } else {
-          close = baseOpen + 7.0 + (h - 8) * 0.9 + (Math.random() - 0.5) * 1.2;
-          high = Math.max(open, close) + 1.0;
-          low = Math.min(open, close) - 1.0;
+          close = baseOpen + 15.0 + (h - 8) * 0.8;
+          high = Math.max(open, close) + 0.8;
+          low = Math.min(open, close) - 0.8;
         }
       }
 

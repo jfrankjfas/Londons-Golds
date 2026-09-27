@@ -55,6 +55,9 @@ export interface StrategyParameters {
   enableBreakEven: boolean;     // Mover SL a Breakeven cuando el trade alcance ratio 1:1
   beTriggerRatio: number;       // Ratio de activación (por defecto 1.0 = 1:1)
   beOffsetPips: number;         // Offset de pips al mover a BE (ej. 0.0 o 0.2 para comisiones)
+  
+  // Modo de filtro de dirección de ruptura
+  trendMode?: 'ANY_BREAKOUT' | 'D1_STRICT'; // ANY_BREAKOUT permite operar rupturas hacia ambos lados confirmados
 }
 
 export interface DailyRiskTracker {
