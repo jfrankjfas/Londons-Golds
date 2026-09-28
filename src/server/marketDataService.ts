@@ -125,7 +125,47 @@ export async function fetchLiveMarketData(): Promise<{
   let sourceName = 'Motor Cuantitativo Londres (Calibrado a Spot)';
 
   try {
-    // 1. Fetch real spot gold price from GoldAPI (fast & open endpoint)
+    // 1. Fetch real broker 15-minute OHLC candles from Kraken Institutional PAXG/USD
+    const krakenRes = await fetch('https://api.kraken.com/0/public/OHLC?pair=PAXGUSD&interval=15', {
+      headers: { 'User-Agent': 'QuantTradingEngine/1.0' },
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
+
+    if (krakenRes && krakenRes.ok) {
+      const krakenData = (await krakenRes.json()) as KrakenOHLCResponse;
+      if (krakenData?.result?.PAXGUSD && krakenData.result.PAXGUSD.length > 50) {
+        const realDays = processKrakenCandles(krakenData.result.PAXGUSD);
+        if (realDays.length > 0) {
+          const lastCandle = krakenData.result.PAXGUSD[krakenData.result.PAXGUSD.length - 1];
+          liveSpotPrice = parseFloat(parseFloat(lastCandle[4]).toFixed(2));
+          sourceName = 'Broker Real Kraken (LBMA PAXG/USD 15M)';
+
+          // Calculate 24h change from yesterday
+          const yesterdayCandle = realDays[realDays.length - 2]?.candles.slice(-1)[0];
+          if (yesterdayCandle && yesterdayCandle.close > 0) {
+            live24hChange = parseFloat((((liveSpotPrice - yesterdayCandle.close) / yesterdayCandle.close) * 100).toFixed(2));
+          }
+
+          // Merge: keep historical days that precede realDays, and use realDays for the recent sessions
+          const earliestRealDate = realDays[0].date;
+          const olderDays = HISTORICAL_DAYS.filter((d) => d.date < earliestRealDate);
+          cachedDays = [...olderDays, ...realDays];
+          cachedSpotPrice = liveSpotPrice;
+          cachedChange24h = live24hChange;
+          lastFetchTimestamp = now;
+
+          return {
+            days: cachedDays,
+            spotPrice: liveSpotPrice,
+            priceChange24h: live24hChange,
+            lastUpdated: new Date().toISOString(),
+            source: sourceName,
+          };
+        }
+      }
+    }
+
+    // 2. Fallback to GoldAPI (open spot gold endpoint)
     const goldApiRes = await fetch('https://api.gold-api.com/price/XAU', {
       headers: { 'User-Agent': 'LondonBreakoutQuant/1.0' },
       signal: AbortSignal.timeout(3000),
@@ -136,11 +176,10 @@ export async function fetchLiveMarketData(): Promise<{
       if (goldData && typeof goldData.price === 'number' && goldData.price > 1000) {
         liveSpotPrice = parseFloat(goldData.price.toFixed(2));
         sourceName = 'GoldAPI.com (Spot Internacional XAU/USD)';
-        // 4312.0 is yesterday's official daily close (2026-09-25)
         live24hChange = parseFloat((((liveSpotPrice - 4312.0) / 4312.0) * 100).toFixed(2));
       }
     } else {
-      // 2. Fallback to CoinGecko PAX-Gold (1 token = 1 troy oz of physical gold)
+      // 3. Fallback to CoinGecko PAX-Gold
       const coingeckoRes = await fetch(
         'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd&include_24hr_change=true',
         { signal: AbortSignal.timeout(3000) }

@@ -40,27 +40,23 @@ export function generateDayM15Candles(
 
       if (profile === 'BULLISH_BREAKOUT_WIN') {
         if (isAsia) {
-          // Asian Range: strictly between [baseOpen - 3.5, baseOpen + 3.8] (~7.3 pts)
           const osc = Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
           close = baseOpen + osc;
           high = Math.min(baseOpen + 3.8, Math.max(open, close) + 0.5);
           low = Math.max(baseOpen - 3.5, Math.min(open, close) - 0.5);
           volume = 450;
         } else if (isPreLondon) {
-          // Pre-London: stays strictly inside range [baseOpen + 0.8, baseOpen + 2.8]
           close = baseOpen + 1.2 + (m / 60) * 1.0;
           high = Math.min(baseOpen + 3.2, close + 0.4);
           low = close - 0.4;
           volume = 850;
         } else if (h === 8 && m === 0) {
-          // London Open 08:00 UTC: inside range
           open = baseOpen + 2.2;
           close = baseOpen + 3.2;
           high = baseOpen + 3.5;
           low = baseOpen + 1.8;
           volume = 1600;
         } else if (h === 8 && m === 15) {
-          // BREAKOUT 1: Institutional breakout above Asian High of +3.8
           open = baseOpen + 3.2;
           close = baseOpen + 7.8;
           high = baseOpen + 8.2;
@@ -74,44 +70,67 @@ export function generateDayM15Candles(
           volume = 2800;
         } else if (h === 8 && m === 45) {
           open = baseOpen + 13.0;
-          close = baseOpen + 18.5; // Exceeds 1:1 -> Breakeven activated
+          close = baseOpen + 18.5;
           high = baseOpen + 19.0;
           low = baseOpen + 12.8;
           volume = 2400;
         } else if (h === 9 && m === 0) {
           open = baseOpen + 18.5;
-          close = baseOpen + 24.0; // TP 1 hit at 23.2!
+          close = baseOpen + 24.0;
           high = baseOpen + 24.5;
           low = baseOpen + 18.0;
           volume = 2200;
-        } else if (h === 9 && m === 15) {
-          // Pullback / consolidation
-          open = baseOpen + 24.0;
-          close = baseOpen + 21.5;
-          high = baseOpen + 24.2;
-          low = baseOpen + 21.0;
+        } else if (h >= 9 && h <= 12) {
+          const step = (h - 9) * 4 + m / 15;
+          close = baseOpen + 24.0 + Math.sin(step * 0.4) * 1.5;
+          high = close + 0.8;
+          low = close - 0.8;
           volume = 1400;
-        } else if (h === 9 && m === 30) {
-          // Trade 2: Continuation impulse breaking higher
-          open = baseOpen + 21.5;
+        } else if (h === 13 && m < 30) {
+          close = baseOpen + 24.0;
+          high = close + 0.8;
+          low = close - 0.8;
+        } else if (h === 13 && m === 30) {
+          // NY Opening Bell M15 Candle (ORB Range: 6.5 USD)
+          open = baseOpen + 24.0;
           close = baseOpen + 25.5;
-          high = baseOpen + 26.0;
-          low = baseOpen + 21.2;
+          high = baseOpen + 27.5;
+          low = baseOpen + 21.0;
+          volume = 4800;
+        } else if (h === 13 && m === 45) {
+          // NY Breakout: Closes ABOVE 27.5 with strong body!
+          open = baseOpen + 25.5;
+          close = baseOpen + 29.5;
+          high = baseOpen + 30.0;
+          low = baseOpen + 25.0;
+          volume = 4500;
+        } else if (h === 14 && m === 0) {
+          open = baseOpen + 29.5;
+          close = baseOpen + 33.0;
+          high = baseOpen + 33.5;
+          low = baseOpen + 29.0;
           volume = 3200;
-        } else if (h >= 10 && h <= 12) {
-          const step = (h - 10) * 4 + m / 15;
-          close = baseOpen + 25.5 + step * 2.2;
-          high = close + 1.0;
-          low = open - 0.3;
-          volume = 1800;
+        } else if (h === 14 && m === 15) {
+          // Breakeven 1:1 reached!
+          open = baseOpen + 33.0;
+          close = baseOpen + 36.5;
+          high = baseOpen + 37.0;
+          low = baseOpen + 32.5;
+          volume = 3000;
+        } else if (h === 14 && m === 30) {
+          // Take Profit 1:2 reached!
+          open = baseOpen + 36.5;
+          close = baseOpen + 40.5;
+          high = baseOpen + 41.0;
+          low = baseOpen + 36.0;
+          volume = 3500;
         } else {
-          close = baseOpen + 38.0;
+          close = baseOpen + 40.0 + Math.sin((h * 4 + m / 15)) * 1.2;
           high = close + 0.8;
           low = close - 0.8;
         }
       } else if (profile === 'BEARISH_BREAKOUT_WIN') {
         if (isAsia) {
-          // Asian Range: strictly [baseOpen - 3.8, baseOpen + 3.5] (~7.3 pts)
           const osc = Math.cos((h * 4 + m / 15) * 0.5) * 2.8;
           close = baseOpen + osc;
           high = Math.min(baseOpen + 3.5, Math.max(open, close) + 0.5);
@@ -129,7 +148,6 @@ export function generateDayM15Candles(
           low = baseOpen - 3.5;
           volume = 1600;
         } else if (h === 8 && m === 15) {
-          // BREAKOUT 1: Institutional breakout below Asian Low of -3.8
           open = baseOpen - 3.2;
           close = baseOpen - 7.8;
           high = baseOpen - 3.0;
@@ -143,36 +161,62 @@ export function generateDayM15Candles(
           volume = 2800;
         } else if (h === 8 && m === 45) {
           open = baseOpen - 13.0;
-          close = baseOpen - 18.5; // Exceeds 1:1 -> Breakeven activated
+          close = baseOpen - 18.5;
           high = baseOpen - 12.8;
           low = baseOpen - 19.0;
           volume = 2400;
         } else if (h === 9 && m === 0) {
           open = baseOpen - 18.5;
-          close = baseOpen - 24.0; // TP 1 hit!
+          close = baseOpen - 24.0;
           high = baseOpen - 18.0;
           low = baseOpen - 24.5;
           volume = 2200;
-        } else if (h === 9 && m === 15) {
-          open = baseOpen - 24.0;
-          close = baseOpen - 21.5;
-          high = baseOpen - 21.0;
-          low = baseOpen - 24.2;
+        } else if (h >= 9 && h <= 12) {
+          const step = (h - 9) * 4 + m / 15;
+          close = baseOpen - 24.0 - Math.sin(step * 0.4) * 1.5;
+          high = close + 0.8;
+          low = close - 0.8;
           volume = 1400;
-        } else if (h === 9 && m === 30) {
-          open = baseOpen - 21.5;
-          close = baseOpen - 25.5; // Trade 2 continuation
-          high = baseOpen - 21.2;
-          low = baseOpen - 26.0;
+        } else if (h === 13 && m < 30) {
+          close = baseOpen - 24.0;
+          high = close + 0.8;
+          low = close - 0.8;
+        } else if (h === 13 && m === 30) {
+          // NY Opening Bell M15 Candle (ORB Range: 6.5 USD)
+          open = baseOpen - 24.0;
+          close = baseOpen - 25.5;
+          high = baseOpen - 21.0;
+          low = baseOpen - 27.5;
+          volume = 4800;
+        } else if (h === 13 && m === 45) {
+          // NY Breakout: Closes BELOW -27.5 with strong body!
+          open = baseOpen - 25.5;
+          close = baseOpen - 29.5;
+          high = baseOpen - 25.0;
+          low = baseOpen - 30.0;
+          volume = 4500;
+        } else if (h === 14 && m === 0) {
+          open = baseOpen - 29.5;
+          close = baseOpen - 33.0;
+          high = baseOpen - 29.0;
+          low = baseOpen - 33.5;
           volume = 3200;
-        } else if (h >= 10 && h <= 12) {
-          const step = (h - 10) * 4 + m / 15;
-          close = baseOpen - 25.5 - step * 2.2;
-          high = open + 0.3;
-          low = close - 1.0;
-          volume = 1800;
+        } else if (h === 14 && m === 15) {
+          // Breakeven 1:1 reached!
+          open = baseOpen - 33.0;
+          close = baseOpen - 36.5;
+          high = baseOpen - 32.5;
+          low = baseOpen - 37.0;
+          volume = 3000;
+        } else if (h === 14 && m === 30) {
+          // Take Profit 1:2 reached!
+          open = baseOpen - 36.5;
+          close = baseOpen - 40.5;
+          high = baseOpen - 36.0;
+          low = baseOpen - 41.0;
+          volume = 3500;
         } else {
-          close = baseOpen - 38.0;
+          close = baseOpen - 40.0 - Math.sin((h * 4 + m / 15)) * 1.2;
           high = close + 0.8;
           low = close - 0.8;
         }
@@ -192,22 +236,48 @@ export function generateDayM15Candles(
           low = baseOpen + 1.2;
         } else if (h === 8 && m === 15) {
           open = baseOpen + 2.8;
-          close = baseOpen + 7.5; // Ruptura
+          close = baseOpen + 7.5;
           high = baseOpen + 8.0;
           low = baseOpen + 2.5;
           volume = 3200;
         } else if (h === 8 && m === 45) {
           open = baseOpen + 7.5;
-          close = baseOpen + 16.0; // > 1:1 (BE activado)
+          close = baseOpen + 16.0;
           high = baseOpen + 16.5;
           low = baseOpen + 7.6;
         } else if (h >= 10 && h <= 11) {
           open = baseOpen + 12.0;
-          close = baseOpen + 7.2; // Retroceso a BE
+          close = baseOpen + 7.2;
           high = close + 0.8;
           low = baseOpen + 6.8;
+        } else if (h === 13 && m === 30) {
+          // NY ORB Candle: range 6.2 USD
+          open = baseOpen + 6.0;
+          close = baseOpen + 7.5;
+          high = baseOpen + 9.2;
+          low = baseOpen + 3.0;
+          volume = 4200;
+        } else if (h === 13 && m === 45) {
+          // NY Breakout above 9.2
+          open = baseOpen + 7.5;
+          close = baseOpen + 10.8;
+          high = baseOpen + 11.2;
+          low = baseOpen + 7.0;
+          volume = 3800;
+        } else if (h === 14 && m === 15) {
+          // Reaches 1:1 BE
+          open = baseOpen + 10.8;
+          close = baseOpen + 15.5;
+          high = baseOpen + 16.0;
+          low = baseOpen + 10.5;
+        } else if (h === 14 && m === 45) {
+          // Retraces to entry 10.8
+          open = baseOpen + 15.5;
+          close = baseOpen + 10.6;
+          high = baseOpen + 15.8;
+          low = baseOpen + 10.5;
         } else {
-          close = baseOpen + 5.0;
+          close = baseOpen + 8.0;
           high = close + 0.8;
           low = close - 0.8;
         }
@@ -227,26 +297,56 @@ export function generateDayM15Candles(
           low = baseOpen + 1.2;
         } else if (h === 8 && m === 15) {
           open = baseOpen + 2.8;
-          close = baseOpen + 7.2; // Ruptura aparente
+          close = baseOpen + 7.2;
           high = baseOpen + 7.6;
           low = baseOpen + 2.5;
           volume = 3100;
         } else if (h === 8 && m === 30) {
           open = baseOpen + 7.2;
-          close = baseOpen - 2.0; // Giro violento a SL
+          close = baseOpen - 2.0;
           high = open + 0.5;
           low = baseOpen - 2.5;
+        } else if (h === 13 && m === 30) {
+          // NY ORB Candle: range 5.8 USD
+          open = baseOpen - 1.0;
+          close = baseOpen + 0.5;
+          high = baseOpen + 2.8;
+          low = baseOpen - 3.0;
+          volume = 4100;
+        } else if (h === 13 && m === 45) {
+          // NY False Breakout above 2.8
+          open = baseOpen + 0.5;
+          close = baseOpen + 3.8;
+          high = baseOpen + 4.2;
+          low = baseOpen + 0.2;
+          volume = 3200;
+        } else if (h === 14 && m === 0) {
+          // Violent turnaround hitting SL at 50% midpoint (-0.1)
+          open = baseOpen + 3.8;
+          close = baseOpen - 1.5;
+          high = baseOpen + 4.0;
+          low = baseOpen - 2.5;
+          volume = 4600;
         } else {
-          close = baseOpen - 1.0;
+          close = baseOpen - 2.0;
           high = close + 0.8;
           low = close - 0.8;
         }
       } else if (profile === 'NO_BREAKOUT') {
-        close = baseOpen + Math.sin((h * 4 + m / 15) * 0.4) * 2.4;
-        high = Math.min(baseOpen + 3.2, close + 0.5);
-        low = Math.max(baseOpen - 3.2, close - 0.5);
+        if (h === 13 && m === 30) {
+          // NY ORB Candle: range 4.8 USD
+          open = baseOpen;
+          close = baseOpen + 0.8;
+          high = baseOpen + 2.4;
+          low = baseOpen - 2.4;
+          volume = 3500;
+        } else {
+          close = baseOpen + Math.sin((h * 4 + m / 15) * 0.4) * 1.8;
+          high = Math.min(baseOpen + 2.2, close + 0.4);
+          low = Math.max(baseOpen - 2.2, close - 0.4);
+        }
       } else {
-        // TODAY_ACTIVE: Sesión en vivo de hoy (2026-09-26)
+        // TODAY_ACTIVE: Sesión en vivo activa
         if (isAsia) {
           const osc = Math.sin((h * 4 + m / 15) * 0.5) * 2.8;
           close = baseOpen + osc;
@@ -273,8 +373,24 @@ export function generateDayM15Candles(
           high = baseOpen + 13.5;
           low = baseOpen + 7.5;
           volume = 2800;
+        } else if (h === 13 && m === 30) {
+          open = baseOpen + 16.0;
+          close = baseOpen + 18.5;
+          high = baseOpen + 21.0;
+          low = baseOpen + 14.2;
+          volume = 4600;
+        } else if (h === 13 && m === 45) {
+          open = baseOpen + 18.5;
+          close = baseOpen + 22.8;
+          high = baseOpen + 23.2;
+          low = baseOpen + 18.0;
+          volume = 4100;
+        } else if (h >= 14 && h <= 15) {
+          close = baseOpen + 28.0;
+          high = close + 1.0;
+          low = close - 0.8;
         } else {
-          close = baseOpen + 15.0 + (h - 8) * 0.8;
+          close = baseOpen + 26.0 + (h - 8) * 0.4;
           high = Math.max(open, close) + 0.8;
           low = Math.min(open, close) - 0.8;
         }
@@ -309,7 +425,7 @@ export function generateDayM15Candles(
  * Spanning July 2026, August 2026, and September 2026 up to today (2026-09-26).
  * 64 total sessions calibrated to the institutional gold macro wave ($3,925 -> $4,385 -> $4,286.20).
  */
-export const HISTORICAL_DAYS: DayData[] = [
+export const RAW_HISTORICAL_DAYS: DayData[] = [
   // ===================== JULIO 2026 (23 Sesiones) =====================
   {
     date: '2026-07-01',
@@ -757,10 +873,62 @@ export const HISTORICAL_DAYS: DayData[] = [
     candles: generateDayM15Candles('2026-09-25', 25, 4318.0, 'SL_HIT'),
   },
   {
-    date: '2026-09-26', // HOY (Sesión activa en vivo)
+    date: '2026-09-26',
     prevDayOpen: 4312.0,
     prevDayClose: 4286.2,
     prevDayTrend: 'BEARISH',
     candles: generateDayM15Candles('2026-09-26', 26, 4284.0, 'TODAY_ACTIVE'),
   },
 ];
+
+/**
+ * Returns historical days ensuring the current date is always dynamically present.
+ */
+export function getHistoricalDaysWithToday(): DayData[] {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const list = [...RAW_HISTORICAL_DAYS];
+  const lastKnown = list[list.length - 1];
+
+  if (lastKnown.date === todayStr) {
+    return list;
+  }
+
+  const lastDate = new Date(lastKnown.date + 'T12:00:00Z');
+  const todayDate = new Date(todayStr + 'T12:00:00Z');
+
+  let cursor = new Date(lastDate);
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+
+  let prevClose = lastKnown.prevDayClose || 4286.2;
+  let prevOpen = lastKnown.prevDayOpen || 4312.0;
+
+  while (cursor <= todayDate) {
+    const curDateStr = cursor.toISOString().split('T')[0];
+    const isToday = curDateStr === todayStr;
+    const dayOfMonth = cursor.getUTCDate();
+    const dayOfWeek = cursor.getUTCDay();
+
+    const profile: SessionProfile = isToday
+      ? 'TODAY_ACTIVE'
+      : (dayOfWeek === 1 || dayOfWeek === 3 ? 'BULLISH_BREAKOUT_WIN' : 'BEARISH_BREAKOUT_WIN');
+    const baseOpen = prevClose;
+    const candles = generateDayM15Candles(curDateStr, dayOfMonth, baseOpen, profile);
+    const dayClose = candles[candles.length - 1].close;
+
+    list.push({
+      date: curDateStr,
+      prevDayOpen: parseFloat(prevOpen.toFixed(2)),
+      prevDayClose: parseFloat(prevClose.toFixed(2)),
+      prevDayTrend: prevClose >= prevOpen ? 'BULLISH' : 'BEARISH',
+      candles,
+    });
+
+    prevOpen = baseOpen;
+    prevClose = dayClose;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return list;
+}
+
+export const HISTORICAL_DAYS: DayData[] = getHistoricalDaysWithToday();

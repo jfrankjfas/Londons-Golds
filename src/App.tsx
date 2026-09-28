@@ -20,9 +20,10 @@ import { MonteCarloSimulatorModal } from './components/MonteCarloSimulatorModal.
 import { ExecutionOrderTicketModal } from './components/ExecutionOrderTicketModal.tsx';
 import { TradingJournalModal } from './components/TradingJournalModal.tsx';
 import { AutoUpdaterModal } from './components/AutoUpdaterModal.tsx';
+import { StrategyBeginnerGuide } from './components/StrategyBeginnerGuide.tsx';
 import { HISTORICAL_DAYS } from './data/mockGoldData.ts';
-import { evaluateStrategyDay } from './utils/quantEngine.ts';
-import { DayData, StrategyParameters, TradeAlert, DailyRiskTracker } from './types/trading.ts';
+import { evaluateStrategyDay, evaluateNYOrbDay } from './utils/quantEngine.ts';
+import { DayData, StrategyParameters, TradeAlert, DailyRiskTracker, StrategyType } from './types/trading.ts';
 import {
   soundManager,
   requestPushPermission,
@@ -53,25 +54,46 @@ export default function App() {
   const [dataSource, setDataSource] = useState<string>('Kraken Institutional Gold (PAXG/USD) + GoldAPI');
   const [isMarketLoading, setIsMarketLoading] = useState<boolean>(false);
 
-  // Strategy mechanical parameters (Full Risk Management & 1:1 Breakeven)
+  // Active strategy selection: Strategy 1 (London Breakout) or Strategy 2 (NY Session ORB)
+  const [strategyType, setStrategyType] = useState<StrategyType>('LONDON_BREAKOUT');
+
+  // Strategy mechanical parameters (Official V1 Settings: 1:2 R:R, Breakeven 1:1, Max SLs 2)
   const [params, setParams] = useState<StrategyParameters>({
+    version: 'V1_ORIGINAL',
     startHourAsia: 0,
     endHourAsia: 7,
     startLondon: 8,
     endLondonTrade: 11,
-    rrRatio: 2.0,
-    slMethod: '50_PERCENT', // 50% midpoint of Asian range
-    dailyRiskLimitPercent: 1.0, // 1.0% maximum daily risk
-    maxSlPerDay: 2,             // 2 SL limit per day
-    maxTpPerDay: 2,             // 2 TP limit per day
-    autoRiskPerTrade: true,     // Sincroniza 1% / 2 SL = 0.5% por trade
-    riskPercent: 0.5,           // 0.5% risk per trade
+    rrRatio: 2.0,               // Target 1:2.0 Oficial
+    slMethod: '50_PERCENT',     // 50% midpoint de la caja de referencia
+    dailyRiskLimitPercent: 2.0, // 2.0% riesgo diario maximo
+    maxSlPerDay: 2,             // Limite de 2 SLs al dia (Circuit Breaker)
+    maxTpPerDay: 2,             // Limite de 2 TPs al dia
+    autoRiskPerTrade: false,
+    riskPercent: 1.0,           // 1.0% riesgo por trade
     accountBalance: 10000,
     maxTradesPerDay: 2,
-    enableBreakEven: true,      // Mover SL al punto de entrada al alcanzar 1:1
+    enableBreakEven: true,      // Breakeven dinamico 1:1
     beTriggerRatio: 1.0,        // 1:1 ratio
-    beOffsetPips: 0.0,          // En la entrada exacta
-    trendMode: 'ANY_BREAKOUT',  // Permite operar rupturas de sesión de alta probabilidad
+    beOffsetPips: 0.20,         // Colchón de $0.20 para comisiones de broker
+    trendMode: 'ANY_BREAKOUT',  // Permite operar rupturas de sesion confirmadas
+    minAsiaRange: 6.0,          // Amplitud minima Tokio ($6.0)
+    maxAsiaRange: 32.0,         // Amplitud maxima Tokio ($32.0 - Filtro Anti-Sobreextension)
+    enableRetestEntry: false,
+    retestTolerancePoints: 2.0,
+    tightRetestSl: false,
+    enableNYSession: false,
+    startNYHour: 13,
+    startNYMinute: 30,
+    endNYHour: 16,
+    endNYMinute: 30,
+    orbDurationMinutes: 15,
+    orbStartHour: 13,
+    orbStartMinute: 30,
+    orbTradeEndHour: 16,
+    orbTradeEndMinute: 30,
+    minOrbRange: 3.0,
+    maxOrbRange: 15.0,
   });
 
   // Daily Risk Tracker for Kill Switch (2 SL / 2 TP)
@@ -108,8 +130,8 @@ export default function App() {
   const [isReplayActive, setIsReplayActive] = useState(false);
   const [replayStep, setReplayStep] = useState<number>(0);
 
-  // Chart display mode: TradingView Pro Live (Default), Quant Breakdown, or Dual View
-  const [chartViewMode, setChartViewMode] = useState<'TRADINGVIEW' | 'QUANT' | 'DUAL'>('TRADINGVIEW');
+  // Chart display mode: Quant Strategy Chart (Default with Real Broker quotes), TradingView Live, or Dual View
+  const [chartViewMode, setChartViewMode] = useState<'TRADINGVIEW' | 'QUANT' | 'DUAL'>('QUANT');
 
   // Real-time market data fetcher
   const fetchRealMarketData = useCallback(async (isManual = false) => {
@@ -225,9 +247,12 @@ export default function App() {
   }, [allDays, selectedDate]);
 
   // Evaluate strategy with current parameters on selected day
-  const { asianRange, trade, trades } = useMemo(() => {
+  const { asianRange, nyOrbRange, trade, trades } = useMemo(() => {
+    if (strategyType === 'NY_ORB') {
+      return evaluateNYOrbDay(selectedDay.candles, selectedDay.prevDayTrend, params);
+    }
     return evaluateStrategyDay(selectedDay.candles, selectedDay.prevDayTrend, params);
-  }, [selectedDay, params]);
+  }, [selectedDay, params, strategyType]);
 
   // Current price is live spot or close of latest candle in the day
   const currentPrice = useMemo(() => {
@@ -281,7 +306,9 @@ export default function App() {
     const day = allDays.find((d) => d.date === newDate);
     if (!day) return;
 
-    const evaluation = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
+    const evaluation = strategyType === 'NY_ORB'
+      ? evaluateNYOrbDay(day.candles, day.prevDayTrend, params)
+      : evaluateStrategyDay(day.candles, day.prevDayTrend, params);
     soundManager.playClick();
 
     if (evaluation.trade) {
@@ -312,10 +339,12 @@ export default function App() {
       addAlert({
         type: 'ASIAN_RANGE_SET',
         title: `Sesión ${newDate}: Filtro de Disciplina Activo`,
-        message: `El precio no generó ruptura con CUERPO M15 en ventana de Londres (08:00 - 11:00 UTC). Cero operaciones tomadas, capital 100% preservado.`,
+        message: strategyType === 'NY_ORB'
+          ? 'El precio no generó ruptura con CUERPO M15 en ventana de Nueva York (13:45 - 16:30 UTC). Cero operaciones, capital 100% preservado.'
+          : 'El precio no generó ruptura con CUERPO M15 en ventana de Londres (08:00 - 11:00 UTC). Cero operaciones, capital 100% preservado.',
       });
     }
-  }, [allDays, params, addAlert]);
+  }, [allDays, params, strategyType, addAlert]);
 
   // Step-by-step 5-stage London Open Replay Simulation
   const handleStartReplaySimulation = () => {
@@ -354,7 +383,7 @@ export default function App() {
       addAlert({
         type: 'BREAKOUT_TRIGGERED',
         title: `Paso 3/5: ¡Gatillo M15 Confirmado! (${isLong ? 'COMPRA' : 'VENTA'})`,
-        message: `Vela M15 cerró con CUERPO en $${entry.toFixed(2)}. SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} (1:2) | Riesgo: ${params.riskPercent}% ($50 USD).`,
+        message: `Vela M15 cerró con CUERPO en $${entry.toFixed(2)}. SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} (1:${params.rrRatio}) | Riesgo: ${params.riskPercent}% ($50 USD).`,
       });
       sendPushNotification(
         `XAU/USD: Gatillo Londres (${isLong ? 'BUY' : 'SELL'})`,
@@ -374,18 +403,18 @@ export default function App() {
       });
     }, 5400);
 
-    // Paso 5: 10:45 UTC - Take Profit 1:2 alcanzado
+    // Paso 5: 10:45 UTC - Take Profit alcanzado
     setTimeout(() => {
       setReplayStep(5);
       soundManager.playTakeProfit();
       addAlert({
         type: 'TP_HIT',
-        title: 'Paso 5/5: 🏆 Take Profit 1:2 Alcanzado (+1.0%)',
-        message: `Meta de beneficios diaria alcanzada (+1:2 R:R | +$100.00 USD). Sesión cerrada exitosamente según plan cuantitativo.`,
+        title: `Paso 5/5: 🏆 Take Profit 1:${params.rrRatio} Alcanzado (+${(params.riskPercent * params.rrRatio).toFixed(2)}%)`,
+        message: `Meta de beneficios diaria alcanzada (+1:${params.rrRatio} R:R | +$${(50 * params.rrRatio).toFixed(2)} USD). Sesión cerrada exitosamente según plan cuantitativo.`,
       });
       sendPushNotification(
         'XAU/USD: 🏆 Take Profit Alcanzado',
-        'Operación cerrada con éxito: +1:2 R:R (+1.0% de cuenta)'
+        `Operación cerrada con éxito: +1:${params.rrRatio} R:R (+${(params.riskPercent * params.rrRatio).toFixed(2)}% de cuenta)`
       );
       setIsReplayActive(false);
     }, 7200);
@@ -444,13 +473,16 @@ export default function App() {
     soundManager.playBreakoutAlert();
 
     const isLong = selectedDay.prevDayTrend === 'BULLISH';
-    const entry = isLong
-      ? (asianRange?.high || 4354.2) + 2.8
-      : (asianRange?.low || 4342.4) - 2.8;
+    const isLondon = strategyType === 'LONDON_BREAKOUT';
+    const refHigh = isLondon ? (asianRange?.high || 4354.2) : (nyOrbRange?.high || 4360.0);
+    const refLow = isLondon ? (asianRange?.low || 4342.4) : (nyOrbRange?.low || 4348.0);
+    const refMid = isLondon ? (asianRange?.midpoint || 4348.3) : (nyOrbRange?.midpoint || 4354.0);
 
-    const sl = isLong
-      ? (asianRange?.midpoint || 4348.3)
-      : (asianRange?.midpoint || 4348.3);
+    const entry = isLong
+      ? refHigh + 2.0
+      : refLow - 2.0;
+
+    const sl = refMid;
 
     const tp = isLong
       ? entry + (entry - sl) * params.rrRatio
@@ -468,23 +500,24 @@ export default function App() {
       ? ` | 🛡️ BE 1:1 en $${beTrigger.toFixed(2)} (SL a Entrada)`
       : '';
 
+    const sessionLabel = isLondon ? 'Londres M15' : 'NY ORB M15';
     const msg = isLong
       ? `RUPTURA ALCISTA (BUY) en $${entry.toFixed(2)}. SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} (1:2 R:R) | Riesgo: ${riskEffective}%${beNote}`
       : `RUPTURA BAJISTA (SELL) en $${entry.toFixed(2)}. SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} (1:2 R:R) | Riesgo: ${riskEffective}%${beNote}`;
 
     addAlert({
       type: 'BREAKOUT_TRIGGERED',
-      title: `¡Gatillo M15 Londres Disparado! (${isLong ? 'BUY' : 'SELL'})`,
+      title: `¡Gatillo ${sessionLabel} Disparado! (${isLong ? 'BUY' : 'SELL'})`,
       message: msg,
     });
 
     sendPushNotification(
-      `XAU/USD: Gatillo Londres (${isLong ? 'BUY' : 'SELL'})`,
+      `XAU/USD: Gatillo ${sessionLabel} (${isLong ? 'BUY' : 'SELL'})`,
       `Entrada: $${entry.toFixed(2)} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}${beNote}`
     );
   };
 
-  // Overall Backtest Stats across all 5 days
+  // Overall Backtest Stats across all days for active strategy
   const backtestStats = useMemo(() => {
     let totalTrades = 0;
     let wins = 0;
@@ -494,7 +527,9 @@ export default function App() {
     let totalProfitUSD = 0;
 
     allDays.forEach((day) => {
-      const res = evaluateStrategyDay(day.candles, day.prevDayTrend, params);
+      const res = strategyType === 'NY_ORB'
+        ? evaluateNYOrbDay(day.candles, day.prevDayTrend, params)
+        : evaluateStrategyDay(day.candles, day.prevDayTrend, params);
       if (res.trades && res.trades.length > 0) {
         res.trades.forEach((t) => {
           totalTrades++;
@@ -528,11 +563,11 @@ export default function App() {
       totalPips: totalPips.toFixed(1),
       totalProfitUSD: totalProfitUSD.toFixed(2),
     };
-  }, [allDays, params]);
+  }, [allDays, params, strategyType]);
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
-      {/* Header Navigation */}
+      {/* Header Navigation with Grouped Menus and Strategy Switcher */}
       <Navbar
         currentPrice={currentPrice}
         priceChange24h={priceChange24h}
@@ -554,12 +589,24 @@ export default function App() {
         onOpenMonteCarloModal={() => setIsMonteCarloOpen(true)}
         onOpenJournalModal={() => setIsJournalOpen(true)}
         onOpenUpdaterModal={() => setIsUpdaterOpen(true)}
+        activeStrategy={strategyType}
+        onSelectStrategy={(s) => {
+          setStrategyType(s);
+          setParams((p) => ({ ...p, strategyType: s }));
+        }}
       />
 
       {/* Main Content Dashboard */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 md:p-6 space-y-4">
         {/* UTC Session Clock & Timeline */}
         <SessionClock isLiveMode={selectedDate === allDays[allDays.length - 1].date} />
+
+        {/* Beginner-Friendly Quick Start Guide & 3-Step Overview */}
+        <StrategyBeginnerGuide
+          activeStrategy={strategyType}
+          onOpenCodeModal={() => setIsCodeOpen(true)}
+          onOpenManualModal={() => setIsManualOpen(true)}
+        />
 
         {/* Backtesting Quick Metrics Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5">
@@ -599,7 +646,7 @@ export default function App() {
             <span className="text-[10px] uppercase font-mono text-slate-400 block mb-1">
               Pips Ganados
             </span>
-            <span className="text-xl sm:text-2xl font-mono font-bold text-indigo-400">
+            <span className="text-xl sm:text-2xl font-mono font-bold text-amber-300">
               +{backtestStats.totalPips}
             </span>
           </div>
@@ -632,40 +679,40 @@ export default function App() {
             <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-mono">
               <button
                 type="button"
+                onClick={() => setChartViewMode('QUANT')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition ${
+                  chartViewMode === 'QUANT'
+                    ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Gráfico con Niveles de Estrategia Oficiales (Caja de Rango, Entrada, Stop Loss al 50%, Take Profit 1:2) y Cotizaciones Reales de Broker"
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Gráfico de Estrategia (Broker Real)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setChartViewMode('TRADINGVIEW')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition ${
                   chartViewMode === 'TRADINGVIEW'
-                    ? 'bg-amber-500 text-slate-950 shadow'
+                    ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Gráfico Profesional TradingView con datos en tiempo real de OANDA/TVC"
               >
                 <Activity className="w-3.5 h-3.5" />
-                <span>TradingView Pro Live</span>
+                <span>TradingView Widget Live</span>
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setChartViewMode('QUANT')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition ${
-                  chartViewMode === 'QUANT'
-                    ? 'bg-amber-500 text-slate-950 shadow'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Auditor Cuántico con Delimitación de Rango Asiático (00-07 UTC) y TP/SL"
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>Auditor Cuántico M15</span>
               </button>
               <button
                 type="button"
                 onClick={() => setChartViewMode('DUAL')}
                 className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition ${
                   chartViewMode === 'DUAL'
-                    ? 'bg-amber-500 text-slate-950 shadow'
+                    ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                     : 'text-slate-400 hover:text-white'
                 }`}
-                title="Ver ambos gráficos simultáneamente (TradingView en Vivo + Auditor Cuántico)"
+                title="Ver ambos gráficos simultáneamente (TradingView en Vivo + Gráfico de Estrategia)"
               >
                 <span>Vista Dual</span>
               </button>
@@ -695,6 +742,7 @@ export default function App() {
           <CandlestickChart
             candles={selectedDay.candles}
             asianRange={asianRange}
+            nyOrbRange={nyOrbRange}
             trade={trade}
             currentPrice={currentPrice}
             dataSource={dataSource}
@@ -702,6 +750,7 @@ export default function App() {
             lastUpdated={lastSyncTime}
             onRefresh={() => fetchRealMarketData(true)}
             isRefreshing={isMarketLoading}
+            activeStrategy={strategyType}
           />
         )}
 
@@ -709,6 +758,8 @@ export default function App() {
         <StrategyStatusCard
           selectedDay={selectedDay}
           asianRange={asianRange}
+          nyOrbRange={nyOrbRange}
+          activeStrategy={strategyType}
           trade={trade}
           trades={trades}
           params={params}
@@ -780,11 +831,13 @@ export default function App() {
       <CodeExporterModal
         isOpen={isCodeOpen}
         onClose={() => setIsCodeOpen(false)}
+        activeStrategy={strategyType}
       />
 
       <StrategyDocModal
         isOpen={isDocsOpen}
         onClose={() => setIsDocsOpen(false)}
+        activeStrategy={strategyType}
       />
 
       <UserManualModal

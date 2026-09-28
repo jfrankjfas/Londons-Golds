@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { AsianRange, DayData, StopLossType, StrategyParameters, TradeSignal, DailyRiskTracker } from '../types/trading.ts';
-import { evaluateStrategyDay } from '../utils/quantEngine.ts';
+import { evaluateStrategyDay, evaluateNYOrbDay } from '../utils/quantEngine.ts';
 import {
+  Check,
   CheckCircle2,
   AlertCircle,
   TrendingUp,
@@ -27,11 +28,13 @@ import {
   XCircle,
   RefreshCw,
   FileText,
+  Sparkles,
 } from 'lucide-react';
 
 interface StrategyStatusCardProps {
   selectedDay: DayData;
   asianRange: AsianRange | null;
+  nyOrbRange?: any;
   trade: TradeSignal | null;
   trades?: TradeSignal[];
   params: StrategyParameters;
@@ -50,11 +53,13 @@ interface StrategyStatusCardProps {
   replayStep?: number;
   onOpenOrderTicket?: () => void;
   onOpenJournalModal?: () => void;
+  activeStrategy?: 'LONDON_BREAKOUT' | 'NY_ORB';
 }
 
 export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
   selectedDay,
   asianRange,
+  nyOrbRange,
   trade,
   trades = [],
   params,
@@ -73,6 +78,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
   replayStep = 0,
   onOpenOrderTicket,
   onOpenJournalModal,
+  activeStrategy = 'LONDON_BREAKOUT',
 }) => {
   const isBullishD1 = selectedDay.prevDayTrend === 'BULLISH';
   const effectiveRisk = params.autoRiskPerTrade
@@ -114,7 +120,9 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
     >();
 
     allDays.forEach((d) => {
-      const { trades: evaluatedTrades } = evaluateStrategyDay(d.candles, d.prevDayTrend, params);
+      const { trades: evaluatedTrades } = activeStrategy === 'NY_ORB'
+        ? evaluateNYOrbDay(d.candles, d.prevDayTrend, params)
+        : evaluateStrategyDay(d.candles, d.prevDayTrend, params);
       if (!evaluatedTrades || evaluatedTrades.length === 0) {
         map.set(d.date, {
           status: 'NO_TRADE',
@@ -165,7 +173,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
       });
     });
     return map;
-  }, [allDays, params]);
+  }, [allDays, params, activeStrategy]);
 
   // Aggregate metrics for filteredDays (aggregates all individual trades)
   const backtestMetrics = useMemo(() => {
@@ -261,7 +269,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
     <div className="flex flex-col gap-4">
       {/* Historical Days Selector Tabs & Multi-Month Backtesting Engine */}
       <div className="bg-[#0E131F] border border-slate-800 rounded-xl p-3.5 shadow-sm">
-        {/* Header with Title and Month Filters */}
+        {/* Header with Title, Month Filters and Live Day Selector */}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-amber-400" />
@@ -269,7 +277,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
               Motor de Backtesting Multi-Mes & Auditoría Cuantitativa
             </span>
             <span className="text-[10px] font-mono bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20">
-              {allDays.length} Sesiones Reales (Jul - Sep 2026)
+              {allDays.length} Sesiones Reales ({activeStrategy === 'LONDON_BREAKOUT' ? 'Londres' : 'NY ORB'})
             </span>
           </div>
 
@@ -342,26 +350,190 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
               {isSimulatingBacktest ? `Simulando ${simulationProgress}%` : 'Ejecutar Backtest'}
             </button>
 
-            {/* Jump to Today Button */}
-            <button
-              onClick={() => onSelectDate(allDays[allDays.length - 1].date)}
-              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-mono bg-blue-500/10 border border-blue-500/30 text-blue-300 hover:bg-blue-500/20 rounded-lg transition-all"
-            >
-              <Zap className="w-3 h-3 text-amber-400" />
-              Hoy 26 Sep (En Vivo)
-            </button>
+            {/* Dynamic Jump to Today Button */}
+            {(() => {
+              const latestDate = allDays[allDays.length - 1]?.date;
+              const latestDateObj = new Date((latestDate || '2026-09-28') + 'T12:00:00Z');
+              const formattedToday = latestDateObj.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+
+              return (
+                <button
+                  type="button"
+                  onClick={() => onSelectDate(latestDate)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono rounded-lg border transition-all ${
+                    selectedDate === latestDate
+                      ? 'bg-amber-500 text-slate-950 font-bold border-amber-400 shadow-sm'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+                  }`}
+                  title="Ir directamente a la sesión en vivo de hoy"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Hoy {formattedToday} (En Vivo)</span>
+                </button>
+              );
+            })()}
 
             {/* Open Quantitative Journal & Official PDF Dossier */}
             {onOpenJournalModal && (
               <button
                 onClick={onOpenJournalModal}
-                className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-mono bg-gradient-to-r from-amber-500/20 to-amber-600/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-amber-600/30 rounded-lg transition-all font-bold shadow-sm"
-                title="Ver Diario Completo de Operaciones y Descargar Dossier Oficial en PDF (Ing. Francisco Alvarado)"
+                className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-mono bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 rounded-lg transition-all font-bold shadow-sm"
+                title="Ver Diario Completo de Operaciones y Descargar Dossier Oficial en PDF"
               >
                 <FileText className="w-3 h-3 text-amber-400" />
-                Dossier PDF & Diario
+                Dossier PDF
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Panel Interactivo de Calibración de Parámetros del Tester */}
+        <div className="mb-3 p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
+                Calibración de Parámetros del Tester ({activeStrategy === 'LONDON_BREAKOUT' ? 'Londres V1' : 'NY ORB'})
+              </span>
+              <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-400" /> Recálculo Dinámico en Tiempo Real
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                onUpdateParams({
+                  rrRatio: 2.0,
+                  enableBreakEven: true,
+                  beTriggerRatio: 1.0,
+                  slMethod: '50_PERCENT',
+                  riskPercent: 1.0,
+                  minAsiaRange: 6.0,
+                  maxAsiaRange: 32.0,
+                  minOrbRange: 3.0,
+                  maxOrbRange: 15.0,
+                  trendMode: 'ANY_BREAKOUT',
+                });
+              }}
+              className="text-[10px] font-mono text-slate-400 hover:text-amber-300 transition flex items-center gap-1"
+              title="Restablecer configuración oficial 1:2"
+            >
+              <RotateCcw className="w-3 h-3" /> Restablecer V1 Oficial (1:2)
+            </button>
+          </div>
+
+          {/* Quick interactive controls grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs font-mono">
+            {/* Control 1: Ratio R:R (Target de Beneficio) */}
+            <div className="bg-[#0E131F] border border-slate-800/80 rounded-lg p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-slate-400 text-[10px] uppercase font-bold">1. Ratio R:R (Take Profit)</span>
+                <span className="text-amber-400 font-bold">1:{params.rrRatio}</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {[1.5, 2.0, 2.5, 3.0].map((ratio) => (
+                  <button
+                    key={ratio}
+                    type="button"
+                    onClick={() => onUpdateParams({ rrRatio: ratio })}
+                    className={`py-1 text-[11px] rounded transition font-bold ${
+                      params.rrRatio === ratio
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    1:{ratio}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Control 2: Protección Breakeven en 1:1 */}
+            <div className="bg-[#0E131F] border border-slate-800/80 rounded-lg p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-slate-400 text-[10px] uppercase font-bold">2. Breakeven 1:1</span>
+                <span className={`text-[10px] font-bold ${params.enableBreakEven ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {params.enableBreakEven ? 'Activado (Protege)' : 'Desactivado (Full TP)'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => onUpdateParams({ enableBreakEven: true })}
+                  className={`py-1 text-[10px] rounded transition font-bold ${
+                    params.enableBreakEven
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                  title="Mueve el SL a entrada al alcanzar 1:1 de beneficio"
+                >
+                  🛡️ BE Activo (1:1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateParams({ enableBreakEven: false })}
+                  className={`py-1 text-[10px] rounded transition font-bold ${
+                    !params.enableBreakEven
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                  title="No hace Breakeven. La operación busca exclusivamente el 1:2 o el SL."
+                >
+                  ⚡ Sin Breakeven
+                </button>
+              </div>
+            </div>
+
+            {/* Control 3: Método Stop Loss */}
+            <div className="bg-[#0E131F] border border-slate-800/80 rounded-lg p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-slate-400 text-[10px] uppercase font-bold">3. Método Stop Loss</span>
+                <span className="text-slate-200 font-bold">
+                  {params.slMethod === '50_PERCENT' ? '50% Mid' : params.slMethod === 'OPPOSITE_RANGE' ? 'Extremo' : 'EMA 20'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {(['50_PERCENT', 'OPPOSITE_RANGE', 'EMA_20'] as StopLossType[]).map((method) => (
+                  <button
+                    key={method}
+                    type="button"
+                    onClick={() => onUpdateParams({ slMethod: method })}
+                    className={`py-1 text-[10px] rounded transition font-bold ${
+                      params.slMethod === method
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {method === '50_PERCENT' ? '50% Mid' : method === 'OPPOSITE_RANGE' ? 'Extremo' : 'EMA20'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Control 4: Riesgo por Operación */}
+            <div className="bg-[#0E131F] border border-slate-800/80 rounded-lg p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-slate-400 text-[10px] uppercase font-bold">4. Riesgo por Trade</span>
+                <span className="text-rose-400 font-bold">{params.riskPercent}%</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {[0.5, 1.0, 2.0].map((risk) => (
+                  <button
+                    key={risk}
+                    type="button"
+                    onClick={() => onUpdateParams({ riskPercent: risk })}
+                    className={`py-1 text-[11px] rounded transition font-bold ${
+                      params.riskPercent === risk
+                        ? 'bg-rose-500 text-white shadow-sm'
+                        : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {risk}%
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -388,19 +560,19 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] font-mono text-slate-400 uppercase">Profit Factor</span>
-            <span className="text-xs font-bold font-mono text-cyan-300">
+            <span className="text-xs font-bold font-mono text-amber-300">
               {backtestMetrics.profitFactor}
             </span>
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] font-mono text-slate-400 uppercase">Protegidos Breakeven</span>
-            <span className="text-xs font-bold font-mono text-cyan-400">
+            <span className="text-xs font-bold font-mono text-slate-300">
               {backtestMetrics.breakevens} trades (1:1)
             </span>
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] font-mono text-slate-400 uppercase">Máx Drawdown</span>
-            <span className="text-xs font-bold font-mono text-amber-400">
+            <span className="text-xs font-bold font-mono text-rose-400">
               -{backtestMetrics.maxDrawdownPct}%
             </span>
           </div>
@@ -413,7 +585,7 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
             const isToday = d.date === allDays[allDays.length - 1].date;
             const dObj = new Date(d.date + 'T12:00:00Z');
             const dayFormatted = isToday
-              ? `Hoy ${dObj.getUTCDate()} Sep`
+              ? `Hoy ${dObj.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`
               : dObj.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
             const ev = dayEvaluations.get(d.date);
@@ -431,17 +603,17 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
                 <div className="flex items-center justify-between w-full">
                   <span className="text-[11px] font-bold font-sans capitalize truncate">{dayFormatted}</span>
                   {isToday ? (
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" title="Sesión activa de hoy" />
                   ) : ev?.status === 'WIN' ? (
                     <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/15 px-1 py-0.2 rounded shrink-0">
-                      +2R
+                      +{params.rrRatio}R
                     </span>
                   ) : ev?.status === 'LOSS' ? (
                     <span className="text-[9px] font-mono font-bold text-rose-400 bg-rose-500/15 px-1 py-0.2 rounded shrink-0">
                       -1R
                     </span>
                   ) : ev?.status === 'BE' ? (
-                    <span className="text-[9px] font-mono font-bold text-cyan-400 bg-cyan-500/15 px-1 py-0.2 rounded shrink-0">
+                    <span className="text-[9px] font-mono font-bold text-slate-300 bg-slate-800 px-1 py-0.2 rounded border border-slate-700 shrink-0">
                       BE
                     </span>
                   ) : null}
@@ -469,154 +641,214 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
         </div>
       </div>
 
+      {/* Banner de Estrategia Activa y Parámetros */}
+      <div className="bg-[#0B101D] border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="text-xs font-mono font-bold text-slate-300 uppercase flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-amber-400" /> Estrategia Activa:
+          </span>
+          <span className={`text-xs font-mono font-bold px-3 py-1 rounded-md border ${
+            activeStrategy === 'LONDON_BREAKOUT'
+              ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+              : 'bg-slate-800 text-slate-200 border-slate-700'
+          }`}>
+            {activeStrategy === 'LONDON_BREAKOUT'
+              ? '👑 Estrategia 1: London Breakout (Gold Killer V1 Oficial)'
+              : '🗽 Estrategia 2: NY Session ORB (Opening Range Breakout Oficial)'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 text-xs font-mono text-slate-300 flex-wrap">
+          <span className="flex items-center gap-1">
+            <Shield className="w-3.5 h-3.5 text-amber-400" />
+            <span>R:R <strong>1:{params.rrRatio}</strong></span>
+          </span>
+          <span>•</span>
+          <span className="flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Breakeven <strong>1:1</strong></span>
+          </span>
+          <span>•</span>
+          <span>Riesgo: <strong className="text-rose-400">{params.riskPercent}%</strong></span>
+          <span>•</span>
+          <span>Circuit Breaker: <strong className="text-amber-400">2 SLs / Día</strong></span>
+        </div>
+      </div>
+
       {/* 5 Reglas Mecánicas Cuantitativas */}
       <div className="bg-[#0E131F] border border-slate-800 rounded-xl p-4 shadow-sm">
         <div className="flex items-center justify-between mb-3 border-b border-slate-800/70 pb-2">
           <div className="flex items-center gap-2">
             <Target className="w-4 h-4 text-amber-400" />
             <h2 className="text-sm font-bold text-white uppercase tracking-tight">
-              Reglas Mecánicas XAU/USD (London Breakout)
+              {activeStrategy === 'LONDON_BREAKOUT'
+                ? 'Reglas Mecánicas: London Breakout (Gold Killer V1 Oficial)'
+                : 'Reglas Mecánicas: New York Opening Range Breakout (ORB Oficial)'}
             </h2>
           </div>
           <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-            100% Cuantitativa
+            100% Cuantitativa • Sin Emociones
           </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {/* Regla 1: Rango Asiático */}
+          {/* Regla 1: Rango de Referencia */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-blue-400 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5" /> 1. Rango Asiático
+                <Clock className="w-3.5 h-3.5" />
+                {activeStrategy === 'LONDON_BREAKOUT' ? '1. Rango Asiático (Tokio)' : '1. Rango ORB (Wall Street)'}
               </span>
               <span className="text-[10px] font-mono bg-blue-500/10 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/20">
-                00:00 - 07:00 UTC
+                {activeStrategy === 'LONDON_BREAKOUT' ? '00:00 - 07:00 UTC' : '13:30 - 13:45 UTC'}
               </span>
             </div>
-            {asianRange ? (
-              <div className="space-y-1 text-xs font-mono">
-                <div className="flex justify-between text-slate-300">
-                  <span className="text-slate-400">High:</span>
-                  <span className="font-bold text-blue-300">${asianRange.high.toFixed(2)}</span>
+            {activeStrategy === 'LONDON_BREAKOUT' ? (
+              asianRange ? (
+                <div className="space-y-1 text-xs font-mono">
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Asian High:</span>
+                    <span className="font-bold text-blue-300">${asianRange.high.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Asian Low:</span>
+                    <span className="font-bold text-blue-300">${asianRange.low.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+                    <span className="text-slate-400">Amplitud Tokio:</span>
+                    <span className="font-bold text-amber-300">${asianRange.rangePoints.toFixed(2)} USD</span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-slate-300">
-                  <span className="text-slate-400">Low:</span>
-                  <span className="font-bold text-blue-300">${asianRange.low.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
-                  <span className="text-slate-400">Amplitud:</span>
-                  <span className="font-bold text-amber-300">${asianRange.rangePoints.toFixed(2)} USD</span>
-                </div>
-              </div>
+              ) : (
+                <p className="text-xs text-slate-400">Calculando cotizaciones asiáticas...</p>
+              )
             ) : (
-              <p className="text-xs text-slate-400">Calculando cotizaciones asiáticas...</p>
+              nyOrbRange ? (
+                <div className="space-y-1 text-xs font-mono">
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">ORB High:</span>
+                    <span className="font-bold text-cyan-300">${nyOrbRange.high.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">ORB Low:</span>
+                    <span className="font-bold text-cyan-300">${nyOrbRange.low.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+                    <span className="text-slate-400">Amplitud Vela M15:</span>
+                    <span className="font-bold text-amber-300">${nyOrbRange.rangePoints.toFixed(2)} USD</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1 text-xs font-mono">
+                  <p className="text-xs text-slate-400">Vela M15 de 13:30 UTC en cálculo...</p>
+                  <div className="flex justify-between text-slate-400 pt-1 border-t border-slate-800">
+                    <span>Filtro de Apertura:</span>
+                    <span className="text-amber-300 font-bold">$3.0 - $15.0 USD</span>
+                  </div>
+                </div>
+              )
             )}
           </div>
 
-          {/* Regla 2: Filtro Quanti D1 y Dirección */}
+          {/* Regla 2: Filtro de Dirección / Filtro de Rango */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-purple-400 flex items-center gap-1.5">
                 {isBullishD1 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                2. Modo de Ruptura
+                {activeStrategy === 'LONDON_BREAKOUT' ? '2. Modo de Ruptura' : '2. Filtro Anti-Sobreextensión'}
               </span>
-              <select
-                value={params.trendMode || 'ANY_BREAKOUT'}
-                onChange={(e) => onUpdateParams({ trendMode: e.target.value as 'ANY_BREAKOUT' | 'D1_STRICT' })}
-                className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-purple-300 rounded px-1.5 py-0.5 cursor-pointer font-bold"
-              >
-                <option value="ANY_BREAKOUT">Ambas Direcciones (Alta Frecuencia)</option>
-                <option value="D1_STRICT">Filtro D1 Estricto</option>
-              </select>
+              <span className="text-[10px] font-mono bg-purple-500/10 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/20">
+                {activeStrategy === 'LONDON_BREAKOUT' ? 'Filtro Cuanti' : 'Calibrado Oro'}
+              </span>
             </div>
-            <div className="space-y-1 text-xs font-mono">
-              <div className="flex justify-between text-slate-300">
-                <span className="text-slate-400">Sesgo de Hoy:</span>
-                <span className={isBullishD1 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                  {params.trendMode === 'D1_STRICT'
-                    ? isBullishD1 ? 'Solo Longs (D1 Alcista)' : 'Solo Shorts (D1 Bajista)'
-                    : 'Cualquier Ruptura Válida (M15)'}
-                </span>
+            {activeStrategy === 'LONDON_BREAKOUT' ? (
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between text-slate-300">
+                  <span className="text-slate-400">Sesgo D1:</span>
+                  <span className={isBullishD1 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                    {params.trendMode === 'D1_STRICT'
+                      ? isBullishD1 ? 'Solo Longs (D1 Alcista)' : 'Solo Shorts (D1 Bajista)'
+                      : 'Ambas Direcciones (M15 Confirmada)'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span className="text-slate-400">Vela D1 Anterior:</span>
+                  <span className="text-white">${selectedDay.prevDayOpen.toFixed(1)} → ${selectedDay.prevDayClose.toFixed(1)}</span>
+                </div>
+                <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+                  <span className="text-slate-400">Rango Tokio Válido:</span>
+                  <span className="text-cyan-300 font-semibold">$6.0 a $32.0 USD</span>
+                </div>
               </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="text-slate-400">Vela D1 Anterior:</span>
-                <span className="text-white">${selectedDay.prevDayOpen.toFixed(1)} → ${selectedDay.prevDayClose.toFixed(1)}</span>
+            ) : (
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between text-slate-300">
+                  <span className="text-slate-400">Rango Mínimo:</span>
+                  <span className="text-white font-bold">$3.00 USD (Evita mercado muerto)</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span className="text-slate-400">Rango Máximo:</span>
+                  <span className="text-amber-300 font-bold">$15.00 USD (Evita sobreextensión)</span>
+                </div>
+                <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+                  <span className="text-slate-400">Estado Filtro:</span>
+                  <span className="text-emerald-400 font-bold">✓ Válido para Operar</span>
+                </div>
               </div>
-              <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
-                <span className="text-slate-400">Confirmación:</span>
-                <span className="text-cyan-300 font-semibold">
-                  {params.trendMode === 'D1_STRICT' ? 'Alineada con Cierre Diario' : 'Expansión de Rango Asiático'}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* Regla 3: Gatillo M15 Londres & Operaciones Permitidas */}
+          {/* Regla 3: Gatillo M15 y Ventana Operativa */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1.5">
-                <Flame className="w-3.5 h-3.5" /> 3. Gatillo & Trades/Día
+                <Flame className="w-3.5 h-3.5" /> 3. Gatillo & Horarios
               </span>
-              <select
-                value={params.maxTradesPerDay ?? 2}
-                onChange={(e) => onUpdateParams({ maxTradesPerDay: parseInt(e.target.value) })}
-                className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-emerald-300 rounded px-1.5 py-0.5 cursor-pointer font-bold"
-              >
-                <option value={1}>Máx 1 Trade / Día</option>
-                <option value={2}>Hasta 2 Trades (Ruptura + Retesteo)</option>
-              </select>
+              <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                {activeStrategy === 'LONDON_BREAKOUT' ? '08:00 - 11:00 UTC' : '13:45 - 16:30 UTC'}
+              </span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed font-sans">
-              Cierre con <strong className="text-white font-semibold">CUERPO</strong> en M15 fuera de Asia. Si Trade #1 sale en TP/BE, permite retesteo.
-            </p>
-            <div className="mt-2 text-xs font-mono flex items-center justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">Ventana Operativa:</span>
-              <span className="text-amber-300 font-bold">
-                08:00 - 11:00 UTC (Londres)
-              </span>
+            
+            <div className="space-y-1 text-[11px] font-mono">
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="text-slate-400">Gatillo Técnico:</span>
+                <span className="text-emerald-400 font-bold">Cierre Vela M15</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="text-slate-400">Confirmación:</span>
+                <span className="text-white font-semibold">Cuerpo sólido fuera de caja</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300 pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Límite Trades:</span>
+                <span className="text-amber-300 font-bold">Máx. 2 Operaciones / Sesión</span>
+              </div>
             </div>
           </div>
 
-          {/* Regla 4: Stop Loss Matemático */}
+          {/* Regla 4: Stop Loss Matemático & R:R 1:2 */}
           <div className="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-mono font-semibold text-amber-400 flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5" /> 4. Stop Loss (SL)
+                <Shield className="w-3.5 h-3.5" /> 4. Stop Loss al 50%
               </span>
-              <select
-                value={params.slMethod}
-                onChange={(e) => onUpdateParams({ slMethod: e.target.value as StopLossType })}
-                className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-amber-300 rounded px-1.5 py-0.5"
-              >
-                <option value="50_PERCENT">50% Rango Asiático</option>
-                <option value="OPPOSITE_RANGE">Lado Opuesto Rango</option>
-                <option value="EMA_20">EMA 20 Periodos</option>
-              </select>
+              <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 font-bold">
+                R:R 1:2 Oficial
+              </span>
             </div>
             <div className="space-y-1 text-xs font-mono">
               <div className="flex justify-between text-slate-300">
-                <span className="text-slate-400">Modo SL:</span>
-                <span className="text-slate-200">
-                  {params.slMethod === '50_PERCENT'
-                    ? '50% del Rango (Matemático)'
-                    : params.slMethod === 'OPPOSITE_RANGE'
-                    ? 'Lado Opuesto'
-                    : 'Media Móvil EMA 20'}
+                <span className="text-slate-400">Nivel Stop Loss:</span>
+                <span className="text-cyan-300 font-bold">
+                  {activeStrategy === 'LONDON_BREAKOUT' ? '50% Punto Medio Tokio' : '50% Punto Medio ORB'}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-slate-300">
-                <span className="text-slate-400">Ratio R:R:</span>
-                <select
-                  value={params.rrRatio}
-                  onChange={(e) => onUpdateParams({ rrRatio: parseFloat(e.target.value) })}
-                  className="text-[10px] font-mono bg-slate-800 border border-slate-700 text-emerald-400 rounded px-1.5 py-0.5 cursor-pointer"
-                >
-                  <option value={1.5}>1:1.5 R:R</option>
-                  <option value={2.0}>1:2.0 R:R (Objetivo)</option>
-                  <option value={2.5}>1:2.5 R:R</option>
-                  <option value={3.0}>1:3.0 R:R (Swing)</option>
-                </select>
+              <div className="flex justify-between items-center text-slate-300 pt-0.5">
+                <span className="text-slate-400">Take Profit:</span>
+                <span className="text-emerald-400 font-bold">El doble del riesgo (1:2)</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-300 pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Expectativa Matemática:</span>
+                <span className="text-amber-300 font-bold">Rentable desde 35% WR</span>
               </div>
             </div>
           </div>
@@ -649,11 +881,20 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
                   {params.dailyRiskLimitPercent ?? 1.0}% (${((params.accountBalance * (params.dailyRiskLimitPercent ?? 1.0)) / 100).toFixed(2)} USD)
                 </span>
               </div>
-              <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+              <div className="flex justify-between items-center text-slate-300 pt-1 border-t border-slate-800">
                 <span className="text-slate-400">Protección Breakeven:</span>
-                <span className={params.enableBreakEven ? 'text-cyan-400 font-bold' : 'text-slate-500'}>
-                  {params.enableBreakEven ? 'Activo en 1:1' : 'Desactivado'}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => onUpdateParams({ enableBreakEven: !params.enableBreakEven })}
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold transition flex items-center gap-1 ${
+                    params.enableBreakEven
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                  }`}
+                  title="Haz clic para alternar: Activar o Desactivar Breakeven (1:2 Puro)"
+                >
+                  {params.enableBreakEven ? '🛡️ BE 1:1 Activo' : '💎 Sin BE (1:2 Puro)'}
+                </button>
               </div>
             </div>
           </div>
@@ -751,10 +992,10 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
                 className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95 ${
                   isReplayActive
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 ring-1 ring-amber-500/30'
-                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/30'
+                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold'
                 }`}
               >
-                <Zap className="w-3.5 h-3.5 text-amber-300" />
+                <Zap className="w-3.5 h-3.5" />
                 <span>{isReplayActive ? `Replay en Curso (Paso ${replayStep}/5)...` : '▶ Simular Sesión Londres (Paso a Paso)'}</span>
               </button>
             )}
@@ -790,16 +1031,16 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
           <div className="flex items-center gap-3 text-[11px] font-mono text-slate-400">
             <span>Regla: 2 SL / 2 TP</span>
             <span>•</span>
-            <span className="text-cyan-400">BE en 1:1</span>
+            <span className="text-slate-300 font-bold">BE en 1:1</span>
           </div>
         </div>
 
         {/* REPLAY PROGRESS BAR (Visible when Replay active) */}
         {isReplayActive && (
-          <div className="mt-3 p-3 bg-indigo-950/40 border border-indigo-500/40 rounded-xl space-y-2 animate-fadeIn">
+          <div className="mt-3 p-3 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2 animate-fadeIn">
             <div className="flex items-center justify-between text-xs font-mono">
-              <span className="text-indigo-300 font-bold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-amber-300 font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 Simulación Cuantitativa Paso a Paso: Sesión Londres XAU/USD
               </span>
               <span className="text-amber-400 font-bold">Paso {replayStep} de 5</span>
@@ -808,13 +1049,13 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
               <div className={`p-1.5 rounded text-center border ${replayStep >= 1 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
                 1. 07:00 Rango Asia
               </div>
-              <div className={`p-1.5 rounded text-center border ${replayStep >= 2 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
+              <div className={`p-1.5 rounded text-center border ${replayStep >= 2 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
                 2. 08:00 Apertura Londres
               </div>
               <div className={`p-1.5 rounded text-center border ${replayStep >= 3 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
                 3. 08:15 Ruptura M15
               </div>
-              <div className={`p-1.5 rounded text-center border ${replayStep >= 4 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
+              <div className={`p-1.5 rounded text-center border ${replayStep >= 4 ? 'bg-slate-800 border-slate-700 text-slate-200 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
                 4. 09:30 1:1 Breakeven
               </div>
               <div className={`p-1.5 rounded text-center border ${replayStep >= 5 ? 'bg-emerald-500/30 border-emerald-500/60 text-emerald-300 font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
@@ -979,12 +1220,9 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
         return (
           <div className="space-y-3">
             {activeTradesList.map((t, tIdx) => {
-              const tradeLabel =
-                activeTradesList.length > 1
-                  ? tIdx === 0
-                    ? 'Op. #1: Ruptura Inicial Londres'
-                    : 'Op. #2: Retesteo / Continuación'
-                  : 'Operación Cuantitativa';
+              const sessionLabel = t.session === 'NEW_YORK' ? 'Nueva York' : 'Londres';
+              const triggerName = t.triggerType === 'M15_RETEST' ? 'Retesteo M15' : 'Ruptura Inicial';
+              const tradeLabel = `Op. #${tIdx + 1}: ${triggerName} (${sessionLabel})`;
 
               return (
                 <div
@@ -996,8 +1234,8 @@ export const StrategyStatusCard: React.FC<StrategyStatusCardProps> = ({
                       : t.status === 'HIT_SL'
                       ? 'bg-rose-950/30 border-rose-500/40'
                       : t.status === 'BREAKEVEN' || t.isBreakevenTriggered
-                      ? 'bg-cyan-950/30 border-cyan-500/40'
-                      : 'bg-blue-950/30 border-blue-500/40'
+                      ? 'bg-slate-900/80 border-slate-700'
+                      : 'bg-slate-900/80 border-slate-800'
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">

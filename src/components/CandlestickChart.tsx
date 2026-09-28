@@ -6,6 +6,7 @@ import { TradingViewWidget } from './TradingViewWidget.tsx';
 interface CandlestickChartProps {
   candles: Candle[];
   asianRange: AsianRange | null;
+  nyOrbRange?: any;
   trade: TradeSignal | null;
   currentPrice: number;
   dataSource?: string;
@@ -13,11 +14,13 @@ interface CandlestickChartProps {
   lastUpdated?: string;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  activeStrategy?: 'LONDON_BREAKOUT' | 'NY_ORB';
 }
 
 export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   candles,
   asianRange,
+  nyOrbRange,
   trade,
   currentPrice,
   dataSource = 'Kraken Institutional (PAXG/USD) + GoldAPI',
@@ -25,6 +28,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   lastUpdated,
   onRefresh,
   isRefreshing = false,
+  activeStrategy = 'LONDON_BREAKOUT',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 440 });
@@ -110,22 +114,48 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   // Map candle index to X coordinate
   const getCandleX = (idx: number) => margin.left + idx * candleSpacing + candleSpacing / 2;
 
-  // Asian Range Box Coordinates
-  const asianBoxCoords = useMemo(() => {
-    if (!asianRange || !showAsianBox) return null;
+  // Active Strategy Range Box Coordinates (Asian Range for London or Opening Range for NY ORB)
+  const rangeBoxCoords = useMemo(() => {
+    if (!showAsianBox) return null;
 
-    // Find indices in displayCandles
+    if (activeStrategy === 'NY_ORB') {
+      if (!nyOrbRange) return null;
+      const startIndex = displayCandles.findIndex((c) => c.time === nyOrbRange.startTime);
+      const endIndex = displayCandles.findIndex((c) => c.time === nyOrbRange.endTime);
+      if (startIndex === -1 && endIndex === -1) return null;
+
+      const x1 = startIndex !== -1 ? getCandleX(startIndex) - candleSpacing / 2 : margin.left;
+      const x2 = endIndex !== -1 ? getCandleX(endIndex) + candleSpacing / 2 : margin.left + chartWidth;
+      const yTop = priceToY(nyOrbRange.high);
+      const yBottom = priceToY(nyOrbRange.low);
+      const yMid = priceToY(nyOrbRange.midpoint);
+
+      return {
+        x: x1,
+        y: yTop,
+        width: Math.max(10, x2 - x1),
+        height: Math.max(2, yBottom - yTop),
+        yHigh: yTop,
+        yLow: yBottom,
+        yMid,
+        high: nyOrbRange.high,
+        low: nyOrbRange.low,
+        mid: nyOrbRange.midpoint,
+        labelHigh: 'NY ORB High',
+        labelLow: 'NY ORB Low',
+        labelMid: 'NY 50% Mid',
+        isNy: true,
+      };
+    }
+
+    // Default: London Breakout (Asian Range)
+    if (!asianRange) return null;
     const startIndex = displayCandles.findIndex((c) => c.time === asianRange.startTime);
     const endIndex = displayCandles.findIndex((c) => c.time === asianRange.endTime);
-
     if (startIndex === -1 && endIndex === -1) return null;
 
     const x1 = startIndex !== -1 ? getCandleX(startIndex) - candleSpacing / 2 : margin.left;
-    const x2 =
-      endIndex !== -1
-        ? getCandleX(endIndex) + candleSpacing / 2
-        : margin.left + chartWidth;
-
+    const x2 = endIndex !== -1 ? getCandleX(endIndex) + candleSpacing / 2 : margin.left + chartWidth;
     const yTop = priceToY(asianRange.high);
     const yBottom = priceToY(asianRange.low);
     const yMid = priceToY(asianRange.midpoint);
@@ -138,8 +168,15 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       yHigh: yTop,
       yLow: yBottom,
       yMid,
+      high: asianRange.high,
+      low: asianRange.low,
+      mid: asianRange.midpoint,
+      labelHigh: 'Asia High',
+      labelLow: 'Asia Low',
+      labelMid: 'Asia 50% Mid',
+      isNy: false,
     };
-  }, [asianRange, showAsianBox, displayCandles, candleSpacing, chartWidth]);
+  }, [asianRange, nyOrbRange, activeStrategy, showAsianBox, displayCandles, candleSpacing, chartWidth]);
 
   // Price axis ticks (5 ticks)
   const priceTicks = useMemo(() => {
@@ -198,39 +235,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     <div id="candlestick-chart-container" className="bg-[#0E131F] border border-slate-800 rounded-xl p-3 sm:p-4 shadow-md flex flex-col">
       {/* Top Chart Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3 pb-2.5 border-b border-slate-800/80">
-        {/* Left Side: Symbol, Mode Tabs & Real-Time Status */}
+        {/* Left Side: Real Broker Feed Status */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Mode Switcher: Quant vs TradingView */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-            <button
-              onClick={() => setViewMode('QUANT')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium transition-all ${
-                viewMode === 'QUANT'
-                  ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              <span>Motor Londres M15</span>
-            </button>
-            <button
-              onClick={() => setViewMode('TRADINGVIEW')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium transition-all ${
-                viewMode === 'TRADINGVIEW'
-                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <LineChart className="w-3.5 h-3.5" />
-              <span>TradingView Live</span>
-            </button>
-          </div>
-
-          {/* Live Market Data Feed Indicator */}
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-mono text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold">MERCADO REAL</span>
-            <span className="text-slate-400 hidden md:inline">| {dataSource}</span>
+            <span className="font-bold">BROKER REAL KRAKEN (PAXG/USD)</span>
+            <span className="text-slate-400 hidden md:inline">• {dataSource}</span>
             {lastUpdated && (
               <span className="text-slate-400 text-[10px] hidden lg:inline">
                 ({new Date(lastUpdated).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })})
@@ -249,86 +259,75 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           </div>
         </div>
 
-        {/* Chart View Toggles & Zoom (Only visible in QUANT mode) */}
-        {viewMode === 'QUANT' ? (
-          <div className="flex items-center gap-1 sm:gap-2">
-            <button
-              onClick={() => setShowAsianBox(!showAsianBox)}
-              className={`px-2 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
-                showAsianBox
-                  ? 'bg-blue-500/15 border-blue-500/30 text-blue-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-400'
-              }`}
-              title="Mostrar/Ocultar Rango Asiático"
-            >
-              {showAsianBox ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-              <span>Asia Box</span>
-            </button>
+        {/* Chart View Toggles & Zoom */}
+        <div className="flex items-center gap-1 sm:gap-2">
+          <button
+            onClick={() => setShowAsianBox(!showAsianBox)}
+            className={`px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
+              showAsianBox
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-bold'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+            title={activeStrategy === 'NY_ORB' ? 'Mostrar/Ocultar Caja ORB (Wall Street)' : 'Mostrar/Ocultar Caja Rango Asiático'}
+          >
+            {showAsianBox ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            <span>{activeStrategy === 'NY_ORB' ? 'Caja ORB' : 'Caja Asia'}</span>
+          </button>
 
-            <button
-              onClick={() => setShowEma(!showEma)}
-              className={`px-2 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
-                showEma
-                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-400'
-              }`}
-              title="Mostrar/Ocultar EMA 20"
-            >
-              {showEma ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-              <span>EMA 20</span>
-            </button>
+          <button
+            onClick={() => setShowEma(!showEma)}
+            className={`px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
+              showEma
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-bold'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+            title="Mostrar/Ocultar EMA 20"
+          >
+            {showEma ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            <span>EMA 20</span>
+          </button>
 
-            <button
-              onClick={() => setShowLevels(!showLevels)}
-              className={`px-2 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
-                showLevels
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-400'
-              }`}
-              title="Mostrar/Ocultar Niveles SL & TP"
-            >
-              {showLevels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-              <span>SL/TP</span>
-            </button>
+          <button
+            onClick={() => setShowLevels(!showLevels)}
+            className={`px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1 border transition-all ${
+              showLevels
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+            title="Mostrar/Ocultar Niveles SL & TP"
+          >
+            {showLevels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            <span>Niveles SL/TP</span>
+          </button>
 
-            <div className="h-4 w-[1px] bg-slate-800 mx-1 hidden sm:block" />
+          <div className="h-4 w-[1px] bg-slate-800 mx-1 hidden sm:block" />
 
-            {/* Zoom controls */}
-            <button
-              onClick={() => setZoomLevel((z) => Math.min(2.5, z + 0.3))}
-              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-              title="Zoom In"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setZoomLevel((z) => Math.max(0.6, z - 0.3))}
-              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-              title="Zoom Out"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setZoomLevel(1)}
-              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-              title="Reset Zoom"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
-          <span className="text-xs font-mono text-slate-400">
-            Feed Streaming Multibroker • Ticks al Segundo
-          </span>
-        )}
+          {/* Zoom controls */}
+          <button
+            onClick={() => setZoomLevel((z) => Math.min(2.5, z + 0.3))}
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+            title="Zoom In"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setZoomLevel((z) => Math.max(0.6, z - 0.3))}
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+            title="Zoom Out"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setZoomLevel(1)}
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+            title="Reset Zoom"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Render TradingView Widget if in TRADINGVIEW mode */}
-      {viewMode === 'TRADINGVIEW' ? (
-        <TradingViewWidget symbol="OANDA:XAUUSD" interval="15" theme="dark" />
-      ) : (
-        <>
-          {/* Floating HUD Bar on Hover */}
+      {/* Floating HUD Bar on Hover */}
       <div className="h-6 flex items-center justify-between text-[11px] font-mono text-slate-300 px-1 mb-1 overflow-x-auto">
         {hoveredCandle ? (
           <div className="flex items-center gap-3 whitespace-nowrap">
@@ -364,10 +363,17 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           </div>
         )}
 
-        {asianRange && (
-          <div className="hidden lg:flex items-center gap-2 text-[10px] text-blue-300 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+        {activeStrategy === 'LONDON_BREAKOUT' && asianRange && (
+          <div className="hidden lg:flex items-center gap-2 text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
             <span>Rango Asiático: ${asianRange.rangePoints.toFixed(2)}</span>
             <span>(H: ${asianRange.high.toFixed(2)} / L: ${asianRange.low.toFixed(2)})</span>
+          </div>
+        )}
+
+        {activeStrategy === 'NY_ORB' && nyOrbRange && (
+          <div className="hidden lg:flex items-center gap-2 text-[10px] text-slate-200 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+            <span>Rango NY ORB (13:30 UTC): ${nyOrbRange.rangePoints.toFixed(2)}</span>
+            <span>(H: ${nyOrbRange.high.toFixed(2)} / L: ${nyOrbRange.low.toFixed(2)})</span>
           </div>
         )}
       </div>
@@ -384,8 +390,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           <defs>
             {/* Asian Box Gradient */}
             <linearGradient id="asianRangeGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.18" />
-              <stop offset="100%" stopColor="#1D4ED8" stopOpacity="0.08" />
+              <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.14" />
+              <stop offset="100%" stopColor="#D97706" stopOpacity="0.04" />
+            </linearGradient>
+            {/* NY ORB Box Gradient */}
+            <linearGradient id="nyOrbRangeGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="#B45309" stopOpacity="0.05" />
             </linearGradient>
             {/* Take Profit Zone Gradient */}
             <linearGradient id="tpGradient" x1="0" y1="0" x2="0" y2="1">
@@ -451,84 +462,84 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             </g>
           ))}
 
-          {/* ASIAN RANGE HIGHLIGHTED BOX */}
-          {asianBoxCoords && (
-            <g id="asian-range-box-group">
+          {/* STRATEGY REFERENCE RANGE HIGHLIGHTED BOX (Asian or NY ORB) */}
+          {rangeBoxCoords && (
+            <g id="range-box-group">
               {/* Shaded Box */}
               <rect
-                x={asianBoxCoords.x}
-                y={asianBoxCoords.y}
-                width={asianBoxCoords.width}
-                height={asianBoxCoords.height}
-                fill="url(#asianRangeGradient)"
-                stroke="#3B82F6"
+                x={rangeBoxCoords.x}
+                y={rangeBoxCoords.y}
+                width={rangeBoxCoords.width}
+                height={rangeBoxCoords.height}
+                fill={rangeBoxCoords.isNy ? 'url(#nyOrbRangeGradient)' : 'url(#asianRangeGradient)'}
+                stroke="#F59E0B"
                 strokeWidth="1.5"
                 strokeDasharray="4 2"
                 rx="3"
               />
 
-              {/* Asian High Horizontal Line extended to current chart width */}
+              {/* Range High Horizontal Line extended to current chart width */}
               <line
-                x1={asianBoxCoords.x}
-                y1={asianBoxCoords.yHigh}
+                x1={rangeBoxCoords.x}
+                y1={rangeBoxCoords.yHigh}
                 x2={margin.left + chartWidth}
-                y2={asianBoxCoords.yHigh}
-                stroke="#60A5FA"
+                y2={rangeBoxCoords.yHigh}
+                stroke="#F59E0B"
                 strokeWidth="1.5"
                 strokeDasharray="4 2"
               />
               <text
-                x={asianBoxCoords.x + 8}
-                y={asianBoxCoords.yHigh - 5}
-                fill="#93C5FD"
+                x={rangeBoxCoords.x + 8}
+                y={rangeBoxCoords.yHigh - 5}
+                fill="#FCD34D"
                 fontSize="10"
                 fontFamily="JetBrains Mono, monospace"
                 fontWeight="600"
               >
-                Asia High: ${asianRange?.high.toFixed(2)}
+                {rangeBoxCoords.labelHigh}: ${rangeBoxCoords.high.toFixed(2)}
               </text>
 
-              {/* Asian Low Horizontal Line */}
+              {/* Range Low Horizontal Line */}
               <line
-                x1={asianBoxCoords.x}
-                y1={asianBoxCoords.yLow}
+                x1={rangeBoxCoords.x}
+                y1={rangeBoxCoords.yLow}
                 x2={margin.left + chartWidth}
-                y2={asianBoxCoords.yLow}
-                stroke="#60A5FA"
+                y2={rangeBoxCoords.yLow}
+                stroke="#F59E0B"
                 strokeWidth="1.5"
                 strokeDasharray="4 2"
               />
               <text
-                x={asianBoxCoords.x + 8}
-                y={asianBoxCoords.yLow + 12}
-                fill="#93C5FD"
+                x={rangeBoxCoords.x + 8}
+                y={rangeBoxCoords.yLow + 12}
+                fill="#FCD34D"
                 fontSize="10"
                 fontFamily="JetBrains Mono, monospace"
                 fontWeight="600"
               >
-                Asia Low: ${asianRange?.low.toFixed(2)}
+                {rangeBoxCoords.labelLow}: ${rangeBoxCoords.low.toFixed(2)}
               </text>
 
-              {/* Asian 50% Midpoint Line (Stop Loss reference) */}
+              {/* 50% Midpoint Line (Stop Loss reference) */}
               <line
-                x1={asianBoxCoords.x}
-                y1={asianBoxCoords.yMid}
+                x1={rangeBoxCoords.x}
+                y1={rangeBoxCoords.yMid}
                 x2={margin.left + chartWidth}
-                y2={asianBoxCoords.yMid}
+                y2={rangeBoxCoords.yMid}
                 stroke="#F59E0B"
                 strokeWidth="1"
                 strokeDasharray="3 3"
                 strokeOpacity="0.8"
               />
               <text
-                x={asianBoxCoords.x + 8}
-                y={asianBoxCoords.yMid - 4}
+                x={rangeBoxCoords.x + 8}
+                y={rangeBoxCoords.yMid - 4}
                 fill="#FCD34D"
                 fontSize="9"
                 fontFamily="JetBrains Mono, monospace"
                 fontWeight="500"
               >
-                Asia 50% Mid: ${asianRange?.midpoint.toFixed(2)}
+                {rangeBoxCoords.labelMid}: ${rangeBoxCoords.mid.toFixed(2)}
               </text>
             </g>
           )}
@@ -852,8 +863,6 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         </div>
         <span className="text-slate-400">Escala de Precios: Oro al contado USD/oz</span>
       </div>
-        </>
-      )}
     </div>
   );
 };
